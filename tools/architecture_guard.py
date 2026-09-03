@@ -30,8 +30,14 @@ ALLOWED_INTERNAL_DEPENDENCIES: dict[str, set[str]] = {
         "document-protocol",
         "document-session",
     },
-    # R0A worker harness; real engine adapters will be added behind engine-api.
-    "document-worker": {"document-engine-api", "document-engine-mock"},
+    # R0A worker/process spike. The transport/protocol edges are the intended process seam;
+    # direct mock access disappears when the real adapter replaces the mock harness.
+    "document-worker": {
+        "document-engine-api",
+        "document-engine-mock",
+        "document-protocol",
+        "document-transport",
+    },
 }
 
 DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")

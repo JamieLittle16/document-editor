@@ -8,6 +8,8 @@ license.workspace = true
 [dependencies]
 document-engine-mock = { path = "../../crates/document-engine-mock" }
 document-engine-api = { path = "../../crates/document-engine-api" }
+document-protocol = { path = "../../crates/document-protocol" }
+document-transport = { path = "../../crates/document-transport" }
 
 [lints]
 workspace = true
