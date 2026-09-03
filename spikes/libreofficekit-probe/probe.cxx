@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -16,6 +17,7 @@ namespace
 constexpr int kCanvasWidth = 256;
 constexpr int kCanvasHeight = 256;
 constexpr unsigned char kSentinel = 0xA5;
+constexpr char kEditMarker[] = "R0A_EDIT_MARKER_7F3D";
 
 std::uint64_t fnv1a64(const std::vector<unsigned char>& bytes)
 {
@@ -138,6 +140,15 @@ int main(int argc, char* argv[])
         std::string validationError;
         if (!validateTextDocument(*document, validationError))
             return fail(validationError);
+
+        if (!document->paste(
+                "text/plain;charset=utf-8", kEditMarker, std::strlen(kEditMarker)))
+        {
+            return fail("could not apply text edit through LibreOfficeKit paste API: "
+                        + takeError(*office));
+        }
+        std::cout << "text_edit=ok\n";
+        std::cout << "text_edit_marker=" << kEditMarker << '\n';
 
         if (!document->saveAs(roundtripPath))
             return fail("could not save round-trip DOCX: " + takeError(*office));
