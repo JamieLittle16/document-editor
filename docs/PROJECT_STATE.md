@@ -25,7 +25,9 @@ Last updated: 2026-09-03
 - process/wire protocol values use fixed-width types rather than host-width `usize` values;
 - transaction resource limits and validation are explicit admission policy rather than implicit implementation behaviour;
 - process framing is a separate bounded control-plane layer and does not select the permanent document-message serializer;
-- large render payloads are not forced through inline control frames merely because a frame codec exists.
+- large render payloads are not forced through inline control frames merely because a frame codec exists;
+- worker EOF and worker exit status are separate evidence: stream closure alone is never treated as proof of graceful engine completion;
+- process restartability is qualified before document-session recovery semantics are designed.
 
 ## Implemented in repository skeleton
 
@@ -35,7 +37,7 @@ Last updated: 2026-09-03
 - deterministic mock engine;
 - revision-conflict test coverage;
 - UI-agnostic document session;
-- desktop and document-worker harness placeholders;
+- desktop and document-worker harnesses;
 - CI quality gates;
 - initial product/architecture/engineering documentation;
 - stable feature and service identifiers;
@@ -68,7 +70,14 @@ Last updated: 2026-09-03
 - payload-size rejection from the header before payload allocation/read;
 - typed clean-EOF versus truncated-header/truncated-payload semantics;
 - tests for short reads/writes and malformed magic/version/kind/flags;
-- dedicated `ENGINE_TRANSPORT.md` architecture contract keeping framing separate from domain encoding and shared-memory policy.
+- dedicated `ENGINE_TRANSPORT.md` architecture contract keeping framing separate from domain encoding and shared-memory policy;
+- real Cargo-built `document-worker` child-process qualification over stdin/stdout using `document-transport`;
+- deliberately disposable `R0A_*` command codec isolated inside the worker spike;
+- worker-loop tests for request correlation, invalid commands, wrong frame role and shutdown ordering;
+- real child-process tests for 64-bit request-ID preservation, graceful shutdown and clean stdin EOF;
+- forced worker-death test requiring a non-success process status plus observed stdout EOF;
+- fresh-worker restart test after forced child death;
+- dedicated `DOCUMENT_WORKER_PROCESS_SPIKE.md` documenting what process behaviour is proven and what remains deliberately unfrozen.
 
 ## Qualified LibreOfficeKit reference environment
 
@@ -89,11 +98,29 @@ Round-trip DOCX bytes after edit: 5047
 
 These are recorded qualification observations, not all permanent golden values. Structural, semantic and visual compatibility contracts will be defined separately.
 
+## Qualified worker-process behaviour
+
+Green R0A process run on the Rust CI gate:
+
+```text
+bounded frame codec: OK
+real Cargo-built child process: OK
+64-bit request correlation across OS pipes: OK
+graceful shutdown response + successful exit: OK
+clean stdin EOF + successful exit: OK
+forced child death + non-success exit: OK
+stdout EOF after forced death: OK
+fresh child restart after forced death: OK
+workspace check/tests/Clippy: OK
+```
+
+This proves process restartability and failure observation. It does **not** yet prove recovery of an open document/session after engine loss.
+
 ## Immediate next engineering spikes
 
-1. Put the existing mock `document-worker` behind a real supervised child-process vertical slice using `document-transport` and a deliberately provisional domain codec.
-2. Prove worker startup, request/response correlation, clean shutdown, unexpected exit/EOF detection and restartable host state.
-3. Keep the real LibreOffice adapter quarantined until the process-supervision seam is proven independently.
+1. Qualify the smallest real LibreOffice native adapter as a separate executable/process artifact while keeping all LibreOffice headers and native ABI code outside product Rust.
+2. Prove private LibreOffice profile ownership, real engine startup/teardown and typed init/load failure behaviour in that process-shaped adapter.
+3. Force-kill the real-engine adapter while a document is open and determine what host-visible recovery evidence is sufficient before defining production supervisor state.
 4. Extract a minimal semantic snapshot and determine identity stability across edits/reload.
 5. Exercise LibreOfficeKit callbacks/invalidation and map their ordering/threading behaviour.
 6. Measure tile/render payload patterns to decide copy versus shared memory and batching thresholds.
@@ -108,10 +135,12 @@ These are recorded qualification observations, not all permanent golden values. 
 
 - production UI;
 - production Rust-to-LibreOffice FFI;
+- production process-supervisor API;
 - final engine domain-message wire encoding;
 - final cross-platform socket/pipe abstraction;
 - request concurrency/cancellation policy;
 - shared-memory render transport;
+- document-session recovery after a real engine crash;
 - native document engine;
 - collaboration;
 - runtime loading of third-party plugins;
@@ -130,7 +159,7 @@ The kernel/feature boundary is defined in `docs/architecture/FEATURES_AND_EXTENS
 
 R0A has proved that stock LibreOfficeKit can be used headlessly for Writer document loading, layout, tile rendering, primitive text mutation and DOCX round-tripping without exposing LibreOffice types to product Rust code.
 
-This is evidence for the engine boundary, not permission to bypass it. The production adapter/transport remains deliberately unfrozen.
+This is evidence for the engine boundary, not permission to bypass it. The production native adapter remains deliberately unfrozen.
 
 ## Current protocol boundary
 
@@ -138,6 +167,8 @@ The protocol value layer is explicitly process-safe at the primitive level: requ
 
 ## Current transport boundary
 
-`document-transport` now owns only bounded stream framing for opaque control bytes. It proves request correlation, framing-version checks, payload admission, short-read/write behaviour and precise EOF/truncation semantics without choosing the final message serializer or OS process channel.
+`document-transport` owns only bounded stream framing for opaque control bytes. It proves request correlation, framing-version checks, payload admission, short-read/write behaviour and precise EOF/truncation semantics without choosing the final message serializer or OS process channel.
 
-The next step is to exercise that codec across an actual supervised `document-worker` child process before placing LibreOfficeKit behind it.
+That framing has now been exercised across the actual Cargo-built `document-worker` child process. The disposable worker command codec proves process lifecycle and failure observation only; it must not become the product domain protocol by inertia.
+
+The next boundary to qualify is a real LibreOffice-native executable/process adapter using the same architectural principle: native engine details stay on the worker side, while the host observes only bounded, typed process behaviour.
