@@ -122,7 +122,9 @@ int main(int argc, char* argv[])
         if (char* version = office->getVersionInfo(); version != nullptr)
         {
             std::cout << "libreoffice_version_json=" << version << '\n';
-            office->freeMemory(version);
+            // LibreOffice 24.2 lacks the newer freeMemory() convenience wrapper.
+            // freeError() delegates to the same ABI deallocator and works across our baseline.
+            office->freeError(version);
         }
         else
         {
