@@ -21,7 +21,9 @@ Last updated: 2026-09-03
 - bundled features use explicit feature/service contracts wherever practical;
 - external plugins later reuse product contracts behind a capability-based sandbox rather than receiving engine access;
 - trusted bundled feature lifecycle is supervised by a dedicated host rather than ad-hoc startup callbacks;
-- LibreOfficeKit integration is qualified outside the Rust workspace before any unsafe/native adapter contract is frozen.
+- LibreOfficeKit integration is qualified outside the Rust workspace before any unsafe/native adapter contract is frozen;
+- process/wire protocol values use fixed-width types rather than host-width `usize` values;
+- transaction resource limits and validation are explicit admission policy rather than implicit implementation behaviour.
 
 ## Implemented in repository skeleton
 
@@ -54,11 +56,14 @@ Last updated: 2026-09-03
 - isolated LibreOffice user-profile URI in qualification;
 - caller-owned BGRA/RGBA tile-buffer qualification;
 - DOCX round-trip structural validation;
-- primitive UTF-8 text mutation persistence qualification (pending/covered by current CI head).
+- real UTF-8 text mutation persistence through DOCX save/reopen and OOXML semantic validation;
+- fixed-width `RequestId(u64)`, `DocumentRevision(u64)` and `TextOffset(u64)` protocol primitives;
+- explicit `TransactionLimits` and pre-mutation validation for edit count, replacement bytes, UTF-8 boundaries and overlap;
+- regression coverage proving rejected multi-edit transactions leave document state/revision untouched.
 
 ## Qualified LibreOfficeKit reference environment
 
-First green open/render/save/reopen run:
+Green open/render/edit/save/reopen run:
 
 ```text
 Ubuntu: 24.04.4
@@ -67,31 +72,35 @@ BuildId: 420(Build:2)
 Writer layout: 12474 x 17406 TWIPs
 Tile mode: BGRA
 256 x 256 render FNV-1a: 0x299c15792be4f780
+Primitive UTF-8 edit: OK
+Persisted edit in OOXML text: OK
 Round-trip reopen: OK
-Round-trip DOCX bytes: 4983
+Round-trip DOCX bytes after edit: 5047
 ```
 
 These are recorded qualification observations, not all permanent golden values. Structural, semantic and visual compatibility contracts will be defined separately.
 
 ## Immediate next engineering spikes
 
-1. Complete/keep green the persisted LibreOfficeKit text-edit round-trip qualification.
-2. Define process transport and protocol envelope after measuring payload classes.
-3. Replace the mock-only worker harness with a supervised process-transport vertical slice while keeping the real engine adapter quarantined.
-4. Extract a minimal semantic snapshot and determine identity stability across edits/reload.
-5. Exercise LibreOfficeKit callbacks/invalidation and map their ordering/threading behaviour.
-6. Crash/kill the worker and prove shell/session recovery behaviour.
-7. Measure tile/render payload patterns to decide copy versus shared memory and batching thresholds.
-8. Build the first compatibility fixture runner.
-9. Run UI framework qualification (Slint leading candidate, alternatives measured).
-10. Add generated/property tests for larger feature graphs before external plugin loading work begins.
-11. Define additive contribution registries only when the first real product feature needs commands/panels/diagnostics; do not invent a generic callback bus.
-12. Write the unsafe/native adapter ADR only after the remaining LibreOfficeKit measurements constrain the design.
+1. Define and prove bounded process framing/request correlation without freezing the domain-message serialization format.
+2. Replace the mock-only worker harness with a supervised process-transport vertical slice while keeping the real engine adapter quarantined.
+3. Extract a minimal semantic snapshot and determine identity stability across edits/reload.
+4. Exercise LibreOfficeKit callbacks/invalidation and map their ordering/threading behaviour.
+5. Crash/kill the worker and prove shell/session recovery behaviour.
+6. Measure tile/render payload patterns to decide copy versus shared memory and batching thresholds.
+7. Build the first compatibility fixture runner.
+8. Run UI framework qualification (Slint leading candidate, alternatives measured).
+9. Add generated/property tests for larger feature graphs before external plugin loading work begins.
+10. Define additive contribution registries only when the first real product feature needs commands/panels/diagnostics; do not invent a generic callback bus.
+11. Write the unsafe/native adapter ADR only after the remaining LibreOfficeKit measurements constrain the design.
+12. Replace the text-fixture transaction subset with richer semantic operations only as real Writer capability/identity evidence becomes available.
 
 ## Explicitly not started
 
 - production UI;
 - production Rust-to-LibreOffice FFI;
+- final engine domain-message wire encoding;
+- shared-memory render transport;
 - native document engine;
 - collaboration;
 - runtime loading of third-party plugins;
@@ -108,6 +117,10 @@ The kernel/feature boundary is defined in `docs/architecture/FEATURES_AND_EXTENS
 
 ## Current engine-spike boundary
 
-R0A has proved that stock LibreOfficeKit can be used headlessly for Writer document loading, layout, tile rendering and DOCX round-tripping without exposing LibreOffice types to product Rust code. The active probe now additionally requires a real text edit to persist through the saved OOXML package.
+R0A has proved that stock LibreOfficeKit can be used headlessly for Writer document loading, layout, tile rendering, primitive text mutation and DOCX round-tripping without exposing LibreOffice types to product Rust code.
 
 This is evidence for the engine boundary, not permission to bypass it. The production adapter/transport remains deliberately unfrozen.
+
+## Current protocol boundary
+
+The protocol value layer is now explicitly process-safe at the primitive level: request IDs, revisions and temporary text offsets use fixed-width integers, and transactions validate resource/range invariants before mutation. `TextOffset` is a narrow bootstrap value only; it is not the future semantic anchor model used by history/comments/collaboration.
