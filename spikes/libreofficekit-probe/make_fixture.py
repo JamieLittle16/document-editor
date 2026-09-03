@@ -21,14 +21,23 @@ ROOT_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 </Relationships>
 """
 
+# w14:paraId / w14:textId are deliberately seeded with known values. They are
+# compatibility evidence for the semantic-identity spike, not yet product IDs.
 DOCUMENT = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:document
+    xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="w14">
   <w:body>
-    <w:p>
+    <w:p w14:paraId="13579BDF" w14:textId="2468ACE0">
       <w:r><w:t>Document Editor LibreOfficeKit R0A probe</w:t></w:r>
     </w:p>
-    <w:p>
+    <w:p w14:paraId="89ABCDEF" w14:textId="10293847">
       <w:r><w:t>This fixture is generated deterministically in CI.</w:t></w:r>
+    </w:p>
+    <w:p w14:paraId="A1B2C3D4" w14:textId="55667788">
+      <w:r><w:t>Stable semantic identity must be measured, not assumed.</w:t></w:r>
     </w:p>
     <w:sectPr>
       <w:pgSz w:w="11906" w:h="16838"/>
