@@ -263,14 +263,7 @@ impl FeatureRegistry {
         }
 
         for prerequisite in prerequisites {
-            self.visit(
-                &prerequisite,
-                enabled,
-                providers,
-                marks,
-                stack,
-                order,
-            )?;
+            self.visit(&prerequisite, enabled, providers, marks, stack, order)?;
         }
 
         let popped = stack.pop();
@@ -439,7 +432,10 @@ impl fmt::Display for ResolveError {
                 "feature {feature} conflicts with unregistered feature {conflict}"
             ),
             Self::Conflict { first, second } => {
-                write!(formatter, "features {first} and {second} cannot both be active")
+                write!(
+                    formatter,
+                    "features {first} and {second} cannot both be active"
+                )
             }
             Self::PreferredProviderDisabled { service, provider } => write!(
                 formatter,
@@ -450,14 +446,20 @@ impl fmt::Display for ResolveError {
                 "feature {provider} was selected for service {service} but does not provide it"
             ),
             Self::MissingService { feature, service } => {
-                write!(formatter, "feature {feature} requires service {service} with no active provider")
+                write!(
+                    formatter,
+                    "feature {feature} requires service {service} with no active provider"
+                )
             }
             Self::AmbiguousService { service, providers } => write!(
                 formatter,
                 "service {service} has multiple active providers and no preference: {providers:?}"
             ),
             Self::DependencyCycle(cycle) => {
-                write!(formatter, "feature activation contains a dependency cycle: {cycle:?}")
+                write!(
+                    formatter,
+                    "feature activation contains a dependency cycle: {cycle:?}"
+                )
             }
         }
     }
@@ -598,7 +600,9 @@ mod tests {
         let mut selection = FeatureSelection::new();
         selection.prefer_provider(exporter.clone(), feature_id("export.pdf.native"));
 
-        let resolved = registry.resolve(&selection).expect("provider preference is valid");
+        let resolved = registry
+            .resolve(&selection)
+            .expect("provider preference is valid");
         assert!(resolved.is_enabled(&feature_id("export.pdf.native")));
         assert_eq!(
             resolved.provider(&exporter),
