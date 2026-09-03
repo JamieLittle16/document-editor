@@ -31,10 +31,8 @@ constexpr unsigned char kCommandEngineInfo = 1;
 constexpr unsigned char kCommandOpen = 2;
 constexpr unsigned char kCommandClose = 3;
 constexpr unsigned char kCommandShutdown = 4;
-constexpr unsigned char kCommandLiveParagraphs = 5;
+constexpr unsigned char kCommandLiveText = 5;
 constexpr unsigned char kCommandPasteAtDocumentStart = 6;
-
-constexpr std::size_t kMaxSemanticParagraphs = 64;
 
 struct Frame
 {
@@ -87,13 +85,6 @@ void writeU64(unsigned char* bytes, std::uint64_t value)
 {
     for (unsigned int index = 0; index < 8; ++index)
         bytes[index] = static_cast<unsigned char>((value >> (8U * index)) & 0xffU);
-}
-
-void appendU32(std::vector<unsigned char>& bytes, std::uint32_t value)
-{
-    const std::size_t offset = bytes.size();
-    bytes.resize(offset + 4);
-    writeU32(bytes.data() + offset, value);
 }
 
 void appendU64(std::vector<unsigned char>& bytes, std::uint64_t value)
@@ -280,55 +271,27 @@ std::vector<unsigned char> openDocument(
     return response;
 }
 
-std::vector<unsigned char> liveParagraphs(
+std::vector<unsigned char> liveText(
     lok::Office& office, std::unique_ptr<lok::Document>& document)
 {
     if (!document)
-        return errorPayload(kStatusEngineState, kCommandLiveParagraphs, "no open document");
+        return errorPayload(kStatusEngineState, kCommandLiveText, "no open document");
 
-    const int view = document->getView();
-    document->setAccessibilityState(view, true);
-    document->postUnoCommand(".uno:GoToStartOfDoc", nullptr, false);
+    // R0A qualification only: SelectAll + getTextSelection is already a proven
+    // synchronous LOK path. It yields live unsaved text but deliberately does not
+    // pretend to provide structural paragraph identity.
+    document->postUnoCommand(".uno:SelectAll", nullptr, false);
+    char* usedMimeType = nullptr;
+    char* raw = document->getTextSelection("text/plain;charset=utf-8", &usedMimeType);
+    const std::string text = takeLokString(office, raw);
+    takeLokString(office, usedMimeType);
+    if (text.empty())
+        return errorPayload(kStatusEngineState, kCommandLiveText, "live text snapshot is empty");
+    if (text.size() + 2 > kMaxPayloadBytes)
+        return errorPayload(kStatusEngineState, kCommandLiveText, "live text snapshot exceeds R0A bound");
 
-    std::vector<std::string> paragraphs;
-    for (std::size_t index = 0; index < kMaxSemanticParagraphs; ++index)
-    {
-        const std::string current = takeLokString(office, document->getA11yFocusedParagraph());
-        if (current.empty())
-            return errorPayload(
-                kStatusEngineState,
-                kCommandLiveParagraphs,
-                "LibreOfficeKit returned no focused paragraph accessibility data");
-
-        if (!paragraphs.empty() && current == paragraphs.back())
-            break;
-        paragraphs.push_back(current);
-        document->postUnoCommand(".uno:GoToNextPara", nullptr, false);
-    }
-
-    if (paragraphs.empty())
-        return errorPayload(kStatusEngineState, kCommandLiveParagraphs, "live snapshot is empty");
-    if (paragraphs.size() == kMaxSemanticParagraphs)
-        return errorPayload(
-            kStatusEngineState,
-            kCommandLiveParagraphs,
-            "live snapshot exceeded R0A paragraph bound");
-
-    std::vector<unsigned char> response{kStatusOk, kCommandLiveParagraphs};
-    appendU32(response, static_cast<std::uint32_t>(paragraphs.size()));
-    for (const std::string& paragraph : paragraphs)
-    {
-        if (paragraph.size() > kMaxPayloadBytes
-            || response.size() + 4 + paragraph.size() > kMaxPayloadBytes)
-        {
-            return errorPayload(
-                kStatusEngineState,
-                kCommandLiveParagraphs,
-                "live semantic snapshot exceeds R0A response bound");
-        }
-        appendU32(response, static_cast<std::uint32_t>(paragraph.size()));
-        response.insert(response.end(), paragraph.begin(), paragraph.end());
-    }
+    std::vector<unsigned char> response{kStatusOk, kCommandLiveText};
+    response.insert(response.end(), text.begin(), text.end());
     return response;
 }
 
@@ -425,11 +388,11 @@ int main(int argc, char* argv[])
                         shutdown = true;
                     }
                     break;
-                case kCommandLiveParagraphs:
+                case kCommandLiveText:
                     if (frame.payload.size() != 1)
-                        response = errorPayload(kStatusInvalidRequest, command, "invalid live-snapshot request");
+                        response = errorPayload(kStatusInvalidRequest, command, "invalid live-text request");
                     else
-                        response = liveParagraphs(*office, document);
+                        response = liveText(*office, document);
                     break;
                 case kCommandPasteAtDocumentStart:
                     response = pasteAtDocumentStart(*office, document, frame.payload);
