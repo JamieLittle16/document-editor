@@ -23,7 +23,9 @@ Last updated: 2026-09-03
 - trusted bundled feature lifecycle is supervised by a dedicated host rather than ad-hoc startup callbacks;
 - LibreOfficeKit integration is qualified outside the Rust workspace before any unsafe/native adapter contract is frozen;
 - process/wire protocol values use fixed-width types rather than host-width `usize` values;
-- transaction resource limits and validation are explicit admission policy rather than implicit implementation behaviour.
+- transaction resource limits and validation are explicit admission policy rather than implicit implementation behaviour;
+- process framing is a separate bounded control-plane layer and does not select the permanent document-message serializer;
+- large render payloads are not forced through inline control frames merely because a frame codec exists.
 
 ## Implemented in repository skeleton
 
@@ -59,7 +61,14 @@ Last updated: 2026-09-03
 - real UTF-8 text mutation persistence through DOCX save/reopen and OOXML semantic validation;
 - fixed-width `RequestId(u64)`, `DocumentRevision(u64)` and `TextOffset(u64)` protocol primitives;
 - explicit `TransactionLimits` and pre-mutation validation for edit count, replacement bytes, UTF-8 boundaries and overlap;
-- regression coverage proving rejected multi-edit transactions leave document state/revision untouched.
+- regression coverage proving rejected multi-edit transactions leave document state/revision untouched;
+- std-only `document-transport` control-frame crate;
+- fixed 20-byte versioned frame header with request/response role and `RequestId` correlation;
+- explicit `FrameLimits` admission on both reader and writer;
+- payload-size rejection from the header before payload allocation/read;
+- typed clean-EOF versus truncated-header/truncated-payload semantics;
+- tests for short reads/writes and malformed magic/version/kind/flags;
+- dedicated `ENGINE_TRANSPORT.md` architecture contract keeping framing separate from domain encoding and shared-memory policy.
 
 ## Qualified LibreOfficeKit reference environment
 
@@ -82,11 +91,11 @@ These are recorded qualification observations, not all permanent golden values. 
 
 ## Immediate next engineering spikes
 
-1. Define and prove bounded process framing/request correlation without freezing the domain-message serialization format.
-2. Replace the mock-only worker harness with a supervised process-transport vertical slice while keeping the real engine adapter quarantined.
-3. Extract a minimal semantic snapshot and determine identity stability across edits/reload.
-4. Exercise LibreOfficeKit callbacks/invalidation and map their ordering/threading behaviour.
-5. Crash/kill the worker and prove shell/session recovery behaviour.
+1. Put the existing mock `document-worker` behind a real supervised child-process vertical slice using `document-transport` and a deliberately provisional domain codec.
+2. Prove worker startup, request/response correlation, clean shutdown, unexpected exit/EOF detection and restartable host state.
+3. Keep the real LibreOffice adapter quarantined until the process-supervision seam is proven independently.
+4. Extract a minimal semantic snapshot and determine identity stability across edits/reload.
+5. Exercise LibreOfficeKit callbacks/invalidation and map their ordering/threading behaviour.
 6. Measure tile/render payload patterns to decide copy versus shared memory and batching thresholds.
 7. Build the first compatibility fixture runner.
 8. Run UI framework qualification (Slint leading candidate, alternatives measured).
@@ -100,6 +109,8 @@ These are recorded qualification observations, not all permanent golden values. 
 - production UI;
 - production Rust-to-LibreOffice FFI;
 - final engine domain-message wire encoding;
+- final cross-platform socket/pipe abstraction;
+- request concurrency/cancellation policy;
 - shared-memory render transport;
 - native document engine;
 - collaboration;
@@ -123,4 +134,10 @@ This is evidence for the engine boundary, not permission to bypass it. The produ
 
 ## Current protocol boundary
 
-The protocol value layer is now explicitly process-safe at the primitive level: request IDs, revisions and temporary text offsets use fixed-width integers, and transactions validate resource/range invariants before mutation. `TextOffset` is a narrow bootstrap value only; it is not the future semantic anchor model used by history/comments/collaboration.
+The protocol value layer is explicitly process-safe at the primitive level: request IDs, revisions and temporary text offsets use fixed-width integers, and transactions validate resource/range invariants before mutation. `TextOffset` is a narrow bootstrap value only; it is not the future semantic anchor model used by history/comments/collaboration.
+
+## Current transport boundary
+
+`document-transport` now owns only bounded stream framing for opaque control bytes. It proves request correlation, framing-version checks, payload admission, short-read/write behaviour and precise EOF/truncation semantics without choosing the final message serializer or OS process channel.
+
+The next step is to exercise that codec across an actual supervised `document-worker` child process before placing LibreOfficeKit behind it.

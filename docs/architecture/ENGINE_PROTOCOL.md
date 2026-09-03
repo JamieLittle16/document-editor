@@ -1,6 +1,6 @@
 # Document Engine Protocol
 
-Status: **R0A design target; value-type invariants are executable, wire encoding is not frozen**
+Status: **R0A design target; value-type and control-framing invariants are executable, domain encoding is not frozen**
 
 ## Purpose
 
@@ -22,7 +22,7 @@ The engine protocol is the long-lived seam between our product architecture and 
 
 `document-protocol` intentionally contains dependency-light Rust value types only. R0A now includes:
 
-- `RequestId(u64)` for future transport correlation;
+- `RequestId(u64)` for transport correlation;
 - `DocumentRevision(u64)`;
 - `TextOffset(u64)` for the narrow bootstrap text-fixture protocol;
 - `ProtocolVersion`;
@@ -130,22 +130,24 @@ versioned protocol value/message
       v
 bounded control-frame transport
       |
-      +---- small payload: inline bytes
+      +---- small payload: inline opaque bytes
       |
       `---- large render payload: future shared-memory descriptor
 ```
 
-The next R0A transport slice should first prove bounded framing, request correlation, partial reads/writes, EOF/truncation behaviour and payload-class separation without selecting the final domain-message serialization format.
+`document-transport` now proves the framing layer independently of domain encoding. It provides a fixed 20-byte versioned header, request/response role, `RequestId` correlation, explicit payload limits, short-read/write handling, clean EOF semantics and typed malformed/truncation errors.
+
+The transport intentionally treats payload bytes as opaque. This prevents the R0A framing experiment from accidentally selecting the permanent serializer or mirroring a concrete engine API. See `ENGINE_TRANSPORT.md`.
 
 ## R0A unresolved decisions
 
 - domain-message wire representation (candidate evaluation: postcard/bincode-like custom format, Cap'n Proto, FlatBuffers, Protobuf; no choice merely for popularity);
 - OS transport (local sockets/pipes initially; exact cross-platform abstraction not frozen);
+- request concurrency, cancellation, timeout and response-ordering semantics;
 - shared-memory mechanism for large rendering data;
 - exact transaction algebra beyond the text-fixture subset;
 - semantic snapshot granularity;
 - stable object identity extraction from the bootstrap engine;
-- cancellation representation and request lifecycle;
 - protocol-v1 revision exhaustion semantics.
 
 These require technical spikes before freezing protocol v1.

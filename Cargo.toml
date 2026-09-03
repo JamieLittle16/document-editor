@@ -4,6 +4,7 @@ members = [
   "apps/desktop",
   "crates/app-core",
   "crates/document-protocol",
+  "crates/document-transport",
   "crates/document-engine-api",
   "crates/document-session",
   "crates/document-engine-mock",

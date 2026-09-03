@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # presence here and should be removed as the production app-core path replaces them.
 ALLOWED_INTERNAL_DEPENDENCIES: dict[str, set[str]] = {
     "document-protocol": set(),
+    "document-transport": {"document-protocol"},
     "document-engine-api": {"document-protocol"},
     "document-session": {"document-engine-api", "document-protocol"},
     "document-engine-mock": {"document-engine-api", "document-protocol"},
