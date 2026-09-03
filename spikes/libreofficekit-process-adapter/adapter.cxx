@@ -31,6 +31,10 @@ constexpr unsigned char kCommandEngineInfo = 1;
 constexpr unsigned char kCommandOpen = 2;
 constexpr unsigned char kCommandClose = 3;
 constexpr unsigned char kCommandShutdown = 4;
+constexpr unsigned char kCommandLiveParagraphs = 5;
+constexpr unsigned char kCommandPasteAtDocumentStart = 6;
+
+constexpr std::size_t kMaxSemanticParagraphs = 64;
 
 struct Frame
 {
@@ -85,6 +89,13 @@ void writeU64(unsigned char* bytes, std::uint64_t value)
         bytes[index] = static_cast<unsigned char>((value >> (8U * index)) & 0xffU);
 }
 
+void appendU32(std::vector<unsigned char>& bytes, std::uint32_t value)
+{
+    const std::size_t offset = bytes.size();
+    bytes.resize(offset + 4);
+    writeU32(bytes.data() + offset, value);
+}
+
 void appendU64(std::vector<unsigned char>& bytes, std::uint64_t value)
 {
     const std::size_t offset = bytes.size();
@@ -99,6 +110,17 @@ std::string takeError(lok::Office& office)
         return "unknown LibreOfficeKit error";
 
     const std::string value(raw);
+    office.freeError(raw);
+    return value;
+}
+
+std::string takeLokString(lok::Office& office, char* raw)
+{
+    if (raw == nullptr)
+        return {};
+    const std::string value(raw);
+    // LibreOffice 24.2 does not expose the newer C++ freeMemory() convenience
+    // wrapper. The LOK allocation is released through the same ABI deallocator.
     office.freeError(raw);
     return value;
 }
@@ -257,6 +279,81 @@ std::vector<unsigned char> openDocument(
     appendU64(response, static_cast<std::uint64_t>(height));
     return response;
 }
+
+std::vector<unsigned char> liveParagraphs(
+    lok::Office& office, std::unique_ptr<lok::Document>& document)
+{
+    if (!document)
+        return errorPayload(kStatusEngineState, kCommandLiveParagraphs, "no open document");
+
+    const int view = document->getView();
+    document->setAccessibilityState(view, true);
+    document->postUnoCommand(".uno:GoToStartOfDoc", nullptr, false);
+
+    std::vector<std::string> paragraphs;
+    for (std::size_t index = 0; index < kMaxSemanticParagraphs; ++index)
+    {
+        const std::string current = takeLokString(office, document->getA11yFocusedParagraph());
+        if (current.empty())
+            return errorPayload(
+                kStatusEngineState,
+                kCommandLiveParagraphs,
+                "LibreOfficeKit returned no focused paragraph accessibility data");
+
+        if (!paragraphs.empty() && current == paragraphs.back())
+            break;
+        paragraphs.push_back(current);
+        document->postUnoCommand(".uno:GoToNextPara", nullptr, false);
+    }
+
+    if (paragraphs.empty())
+        return errorPayload(kStatusEngineState, kCommandLiveParagraphs, "live snapshot is empty");
+    if (paragraphs.size() == kMaxSemanticParagraphs)
+        return errorPayload(
+            kStatusEngineState,
+            kCommandLiveParagraphs,
+            "live snapshot exceeded R0A paragraph bound");
+
+    std::vector<unsigned char> response{kStatusOk, kCommandLiveParagraphs};
+    appendU32(response, static_cast<std::uint32_t>(paragraphs.size()));
+    for (const std::string& paragraph : paragraphs)
+    {
+        if (paragraph.size() > kMaxPayloadBytes
+            || response.size() + 4 + paragraph.size() > kMaxPayloadBytes)
+        {
+            return errorPayload(
+                kStatusEngineState,
+                kCommandLiveParagraphs,
+                "live semantic snapshot exceeds R0A response bound");
+        }
+        appendU32(response, static_cast<std::uint32_t>(paragraph.size()));
+        response.insert(response.end(), paragraph.begin(), paragraph.end());
+    }
+    return response;
+}
+
+std::vector<unsigned char> pasteAtDocumentStart(
+    lok::Office& office,
+    std::unique_ptr<lok::Document>& document,
+    const std::vector<unsigned char>& request)
+{
+    if (!document)
+        return errorPayload(
+            kStatusEngineState, kCommandPasteAtDocumentStart, "no open document");
+    if (request.size() <= 1 || containsNul(request, 1))
+        return errorPayload(
+            kStatusInvalidRequest, kCommandPasteAtDocumentStart, "invalid paste text");
+
+    document->postUnoCommand(".uno:GoToStartOfDoc", nullptr, false);
+    const char* text = reinterpret_cast<const char*>(request.data() + 1);
+    const std::size_t textBytes = request.size() - 1;
+    if (!document->paste("text/plain;charset=utf-8", text, textBytes))
+    {
+        return errorPayload(
+            kStatusEngineState, kCommandPasteAtDocumentStart, takeError(office));
+    }
+    return {kStatusOk, kCommandPasteAtDocumentStart};
+}
 } // namespace
 
 int main(int argc, char* argv[])
@@ -327,6 +424,15 @@ int main(int argc, char* argv[])
                         response = {kStatusOk, kCommandShutdown};
                         shutdown = true;
                     }
+                    break;
+                case kCommandLiveParagraphs:
+                    if (frame.payload.size() != 1)
+                        response = errorPayload(kStatusInvalidRequest, command, "invalid live-snapshot request");
+                    else
+                        response = liveParagraphs(*office, document);
+                    break;
+                case kCommandPasteAtDocumentStart:
+                    response = pasteAtDocumentStart(*office, document, frame.payload);
                     break;
                 default:
                     response = errorPayload(kStatusInvalidRequest, command, "unknown R0A command");
