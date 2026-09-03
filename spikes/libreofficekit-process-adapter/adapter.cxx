@@ -31,8 +31,6 @@ constexpr unsigned char kCommandEngineInfo = 1;
 constexpr unsigned char kCommandOpen = 2;
 constexpr unsigned char kCommandClose = 3;
 constexpr unsigned char kCommandShutdown = 4;
-constexpr unsigned char kCommandLiveText = 5;
-constexpr unsigned char kCommandPasteAtDocumentStart = 6;
 
 struct Frame
 {
@@ -101,17 +99,6 @@ std::string takeError(lok::Office& office)
         return "unknown LibreOfficeKit error";
 
     const std::string value(raw);
-    office.freeError(raw);
-    return value;
-}
-
-std::string takeLokString(lok::Office& office, char* raw)
-{
-    if (raw == nullptr)
-        return {};
-    const std::string value(raw);
-    // LibreOffice 24.2 does not expose the newer C++ freeMemory() convenience
-    // wrapper. The LOK allocation is released through the same ABI deallocator.
     office.freeError(raw);
     return value;
 }
@@ -270,53 +257,6 @@ std::vector<unsigned char> openDocument(
     appendU64(response, static_cast<std::uint64_t>(height));
     return response;
 }
-
-std::vector<unsigned char> liveText(
-    lok::Office& office, std::unique_ptr<lok::Document>& document)
-{
-    if (!document)
-        return errorPayload(kStatusEngineState, kCommandLiveText, "no open document");
-
-    // R0A qualification only: SelectAll + getTextSelection is already a proven
-    // synchronous LOK path. It yields live unsaved text but deliberately does not
-    // pretend to provide structural paragraph identity.
-    document->postUnoCommand(".uno:SelectAll", nullptr, false);
-    char* usedMimeType = nullptr;
-    char* raw = document->getTextSelection("text/plain;charset=utf-8", &usedMimeType);
-    const std::string text = takeLokString(office, raw);
-    takeLokString(office, usedMimeType);
-    if (text.empty())
-        return errorPayload(kStatusEngineState, kCommandLiveText, "live text snapshot is empty");
-    if (text.size() + 2 > kMaxPayloadBytes)
-        return errorPayload(kStatusEngineState, kCommandLiveText, "live text snapshot exceeds R0A bound");
-
-    std::vector<unsigned char> response{kStatusOk, kCommandLiveText};
-    response.insert(response.end(), text.begin(), text.end());
-    return response;
-}
-
-std::vector<unsigned char> pasteAtDocumentStart(
-    lok::Office& office,
-    std::unique_ptr<lok::Document>& document,
-    const std::vector<unsigned char>& request)
-{
-    if (!document)
-        return errorPayload(
-            kStatusEngineState, kCommandPasteAtDocumentStart, "no open document");
-    if (request.size() <= 1 || containsNul(request, 1))
-        return errorPayload(
-            kStatusInvalidRequest, kCommandPasteAtDocumentStart, "invalid paste text");
-
-    document->postUnoCommand(".uno:GoToStartOfDoc", nullptr, false);
-    const char* text = reinterpret_cast<const char*>(request.data() + 1);
-    const std::size_t textBytes = request.size() - 1;
-    if (!document->paste("text/plain;charset=utf-8", text, textBytes))
-    {
-        return errorPayload(
-            kStatusEngineState, kCommandPasteAtDocumentStart, takeError(office));
-    }
-    return {kStatusOk, kCommandPasteAtDocumentStart};
-}
 } // namespace
 
 int main(int argc, char* argv[])
@@ -387,15 +327,6 @@ int main(int argc, char* argv[])
                         response = {kStatusOk, kCommandShutdown};
                         shutdown = true;
                     }
-                    break;
-                case kCommandLiveText:
-                    if (frame.payload.size() != 1)
-                        response = errorPayload(kStatusInvalidRequest, command, "invalid live-text request");
-                    else
-                        response = liveText(*office, document);
-                    break;
-                case kCommandPasteAtDocumentStart:
-                    response = pasteAtDocumentStart(*office, document, frame.payload);
                     break;
                 default:
                     response = errorPayload(kStatusInvalidRequest, command, "unknown R0A command");
