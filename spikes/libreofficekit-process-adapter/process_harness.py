@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import struct
 import subprocess
@@ -26,6 +27,15 @@ COMMAND_ENGINE_INFO = 1
 COMMAND_OPEN = 2
 COMMAND_CLOSE = 3
 COMMAND_SHUTDOWN = 4
+COMMAND_LIVE_PARAGRAPHS = 5
+COMMAND_PASTE_AT_DOCUMENT_START = 6
+
+EXPECTED_PARAGRAPHS = (
+    "Document Editor LibreOfficeKit R0A probe",
+    "This fixture is generated deterministically in CI.",
+    "Stable semantic identity must be measured, not assumed.",
+)
+LIVE_EDIT_MARKER = "R0A_LIVE_EDIT_42_"
 
 
 def read_exact(stream: BinaryIO, size: int, *, clean_eof: bool = False) -> bytes | None:
@@ -126,6 +136,37 @@ class NativeAdapter:
             raise RuntimeError(f"invalid native-adapter layout: {width}x{height}")
         return width, height
 
+    def live_paragraphs(self, request_id: int) -> tuple[dict[str, object], ...]:
+        payload = self.request(request_id, bytes([COMMAND_LIVE_PARAGRAPHS]))
+        if len(payload) < 6 or payload[0:2] != bytes([STATUS_OK, COMMAND_LIVE_PARAGRAPHS]):
+            raise RuntimeError(f"unexpected live-snapshot response: {payload!r}")
+        count = struct.unpack_from("<I", payload, 2)[0]
+        offset = 6
+        paragraphs: list[dict[str, object]] = []
+        for _ in range(count):
+            if offset + 4 > len(payload):
+                raise RuntimeError("truncated live-snapshot record length")
+            size = struct.unpack_from("<I", payload, offset)[0]
+            offset += 4
+            if offset + size > len(payload):
+                raise RuntimeError("truncated live-snapshot record")
+            record = json.loads(payload[offset : offset + size].decode("utf-8"))
+            if not isinstance(record, dict):
+                raise RuntimeError(f"live-snapshot record is not an object: {record!r}")
+            paragraphs.append(record)
+            offset += size
+        if offset != len(payload):
+            raise RuntimeError("live-snapshot response has trailing bytes")
+        return tuple(paragraphs)
+
+    def paste_at_document_start(self, request_id: int, text: str) -> None:
+        payload = self.request(
+            request_id,
+            bytes([COMMAND_PASTE_AT_DOCUMENT_START]) + text.encode("utf-8"),
+        )
+        if payload != bytes([STATUS_OK, COMMAND_PASTE_AT_DOCUMENT_START]):
+            raise RuntimeError(f"unexpected live-edit response: {payload!r}")
+
     def graceful_shutdown(self, request_id: int) -> str:
         payload = self.request(request_id, bytes([COMMAND_SHUTDOWN]))
         if payload != bytes([STATUS_OK, COMMAND_SHUTDOWN]):
@@ -156,6 +197,32 @@ def check_typed_load_failure(adapter: NativeAdapter, request_id: int, missing: P
         raise RuntimeError(f"missing document did not return typed load failure: {payload!r}")
 
 
+def paragraph_contents(records: tuple[dict[str, object], ...]) -> tuple[str, ...]:
+    values: list[str] = []
+    for record in records:
+        content = record.get("content")
+        if not isinstance(content, str):
+            raise RuntimeError(f"focused-paragraph record has no string content: {record!r}")
+        values.append(content)
+    return tuple(values)
+
+
+def qualify_live_snapshot(adapter: NativeAdapter) -> tuple[int, tuple[str, ...], tuple[str, ...]]:
+    before_records = adapter.live_paragraphs(30)
+    before = paragraph_contents(before_records)
+    if before != EXPECTED_PARAGRAPHS:
+        raise RuntimeError(f"unexpected live paragraph snapshot before edit: {before!r}")
+
+    adapter.paste_at_document_start(31, LIVE_EDIT_MARKER)
+    after_records = adapter.live_paragraphs(32)
+    after = paragraph_contents(after_records)
+    expected_after = (LIVE_EDIT_MARKER + EXPECTED_PARAGRAPHS[0], *EXPECTED_PARAGRAPHS[1:])
+    if after != expected_after:
+        raise RuntimeError(f"unexpected live paragraph snapshot after unsaved edit: {after!r}")
+
+    return len(before_records), before, after
+
+
 def count_profile_files(profile: Path) -> int:
     return sum(1 for path in profile.rglob("*") if path.is_file())
 
@@ -174,6 +241,7 @@ def main() -> int:
         graceful = NativeAdapter(executable, install, root / "graceful")
         version = check_engine_info(graceful, 0x1122334455667788)
         width, height = graceful.open_document(2, input_docx)
+        live_count, live_before, live_after = qualify_live_snapshot(graceful)
         close_payload = graceful.request(3, bytes([COMMAND_CLOSE]))
         if close_payload != bytes([STATUS_OK, COMMAND_CLOSE]):
             raise RuntimeError(f"unexpected close response: {close_payload!r}")
@@ -212,6 +280,10 @@ def main() -> int:
         print(f"native_adapter_version_json={version}")
         print(f"native_adapter_width_twips={width}")
         print(f"native_adapter_height_twips={height}")
+        print(f"native_adapter_live_paragraphs={live_count}")
+        print(f"native_adapter_live_before={live_before!r}")
+        print(f"native_adapter_live_after={live_after!r}")
+        print("native_adapter_live_unsaved_edit=visible")
         print(f"native_adapter_crash_open_twips={crash_width}x{crash_height}")
         print(f"native_adapter_restart_open_twips={restart_width}x{restart_height}")
         print(f"native_adapter_profile_files={profile_files}")
