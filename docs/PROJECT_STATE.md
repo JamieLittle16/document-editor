@@ -27,7 +27,9 @@ Last updated: 2026-09-03
 - process framing is a separate bounded control-plane layer and does not select the permanent document-message serializer;
 - large render payloads are not forced through inline control frames merely because a frame codec exists;
 - worker EOF and worker exit status are separate evidence: stream closure alone is never treated as proof of graceful engine completion;
-- process restartability is qualified before document-session recovery semantics are designed.
+- process restartability is qualified before document-session recovery semantics are designed;
+- file-format IDs and engine object addresses are evidence inputs, never product semantic identities by default;
+- semantic identity must be qualified through edits and reload before an anchor model is frozen.
 
 ## Implemented in repository skeleton
 
@@ -77,7 +79,18 @@ Last updated: 2026-09-03
 - real child-process tests for 64-bit request-ID preservation, graceful shutdown and clean stdin EOF;
 - forced worker-death test requiring a non-success process status plus observed stdout EOF;
 - fresh-worker restart test after forced child death;
-- dedicated `DOCUMENT_WORKER_PROCESS_SPIKE.md` documenting what process behaviour is proven and what remains deliberately unfrozen.
+- dedicated `DOCUMENT_WORKER_PROCESS_SPIKE.md` documenting what process behaviour is proven and what remains deliberately unfrozen;
+- standalone C++ LibreOfficeKit process adapter outside the Rust workspace;
+- the native adapter independently exercises the bounded `DETR` frame envelope without exposing LibreOffice types to Rust;
+- real LibreOffice private-profile ownership qualification with an isolated process HOME;
+- typed real-engine load failure and invalid-command handling;
+- graceful real-engine shutdown plus forced death while a Writer document is live;
+- fresh LibreOffice process restart and document reopen after forced death;
+- deterministic three-paragraph semantic identity fixture with seeded `w14:paraId` and `w14:textId` candidate values;
+- minimal OOXML semantic paragraph projection for qualification;
+- CI assertions for paragraph cardinality, order, text preservation and edit locality across real LibreOffice edit/save/reopen;
+- recorded rejection of DOCX `w14:paraId` / `w14:textId` as product identity candidates after LibreOffice removed all seeded values on the qualified save path;
+- dedicated `SEMANTIC_IDENTITY_SPIKE.md` documenting the failed candidate and the next live-semantic experiment.
 
 ## Qualified LibreOfficeKit reference environment
 
@@ -89,14 +102,12 @@ LibreOffice: 24.2.7.2
 BuildId: 420(Build:2)
 Writer layout: 12474 x 17406 TWIPs
 Tile mode: BGRA
-256 x 256 render FNV-1a: 0x299c15792be4f780
 Primitive UTF-8 edit: OK
 Persisted edit in OOXML text: OK
 Round-trip reopen: OK
-Round-trip DOCX bytes after edit: 5047
 ```
 
-These are recorded qualification observations, not all permanent golden values. Structural, semantic and visual compatibility contracts will be defined separately.
+Raster hashes and round-trip package byte counts have changed when the deterministic fixture changed and are intentionally **not** semantic goldens.
 
 ## Qualified worker-process behaviour
 
@@ -116,26 +127,66 @@ workspace check/tests/Clippy: OK
 
 This proves process restartability and failure observation. It does **not** yet prove recovery of an open document/session after engine loss.
 
+## Qualified native LibreOffice process behaviour
+
+The standalone native adapter has been qualified against the same stock LibreOffice environment:
+
+```text
+cross-language DETR framing: OK
+private LibreOffice profile: OK
+profile files created: 35
+typed missing-document load failure: OK
+invalid command without engine crash: OK
+graceful engine-process exit: OK
+forced exit with Writer document open: observed
+fresh engine-process restart: OK
+same fixture reopened after restart: OK
+Writer size before crash: 12474 x 17406 TWIPs
+Writer size after restart: 12474 x 17406 TWIPs
+```
+
+This is process-boundary evidence. The R0A native command payload is disposable and is not the final domain-message protocol.
+
+## Qualified semantic snapshot / identity observation
+
+The deterministic fixture now contains three paragraphs with seeded Word 2010 `w14:paraId` and `w14:textId` values. After a real LibreOfficeKit edit/save/reopen on LibreOffice 24.2.7.2:
+
+```text
+input paragraphs: 3
+round-trip paragraphs: 3
+semantic paragraph order/text: preserved
+edit locality: paragraph 1
+w14:paraId values present after save: 0
+seeded w14:paraId preserved: 0 / 3
+seeded w14:textId preserved: 0 / 3
+```
+
+Therefore DOCX `w14:paraId` and `w14:textId` are **rejected as authoritative product semantic identities**. CI does not require LibreOffice to continue stripping them in future versions; the permanent assertion is semantic paragraph preservation for this fixture, not a serialization quirk.
+
+Stable product paragraph/object identity remains unresolved and must be established from the live authoritative engine-side semantic layer or an explicit adapter reconciliation layer.
+
 ## Immediate next engineering spikes
 
-1. Qualify the smallest real LibreOffice native adapter as a separate executable/process artifact while keeping all LibreOffice headers and native ABI code outside product Rust.
-2. Prove private LibreOffice profile ownership, real engine startup/teardown and typed init/load failure behaviour in that process-shaped adapter.
-3. Force-kill the real-engine adapter while a document is open and determine what host-visible recovery evidence is sufficient before defining production supervisor state.
-4. Extract a minimal semantic snapshot and determine identity stability across edits/reload.
-5. Exercise LibreOfficeKit callbacks/invalidation and map their ordering/threading behaviour.
-6. Measure tile/render payload patterns to decide copy versus shared memory and batching thresholds.
-7. Build the first compatibility fixture runner.
-8. Run UI framework qualification (Slint leading candidate, alternatives measured).
-9. Add generated/property tests for larger feature graphs before external plugin loading work begins.
-10. Define additive contribution registries only when the first real product feature needs commands/panels/diagnostics; do not invent a generic callback bus.
-11. Write the unsafe/native adapter ADR only after the remaining LibreOfficeKit measurements constrain the design.
-12. Replace the text-fixture transaction subset with richer semantic operations only as real Writer capability/identity evidence becomes available.
+1. Extract a minimal **live, unsaved semantic snapshot** from the quarantined LibreOffice-side adapter without exposing LibreOffice/UNO/internal types across the process boundary.
+2. Determine what engine-side paragraph/object properties, if any, remain stable through insertion, deletion, split, merge, move, formatting-only edits and save/reload; DOCX `w14` IDs are ruled out as authority.
+3. Exercise LibreOfficeKit callbacks/invalidation and map their ordering, threading and coalescing behaviour.
+4. Relate callback/invalidation events to live semantic revisions so the host can know when cached semantic/render state is stale.
+5. Measure tile/render payload patterns to decide copy versus shared memory and batching thresholds.
+6. Build the first compatibility fixture runner around normalized semantic assertions rather than binary-package equality.
+7. Run UI framework qualification (Slint leading candidate, alternatives measured).
+8. Add generated/property tests for larger feature graphs before external plugin loading work begins.
+9. Define additive contribution registries only when the first real product feature needs commands/panels/diagnostics; do not invent a generic callback bus.
+10. Write the production native-adapter/unsafe-boundary ADR only after semantic and callback measurements constrain the design.
+11. Replace the text-fixture transaction subset with richer semantic operations only as real Writer capability/identity evidence becomes available.
+12. Design document-session recovery only after live semantic identity and restart reconciliation evidence exist.
 
 ## Explicitly not started
 
 - production UI;
 - production Rust-to-LibreOffice FFI;
 - production process-supervisor API;
+- production stable paragraph/object identity;
+- production semantic anchor model;
 - final engine domain-message wire encoding;
 - final cross-platform socket/pipe abstraction;
 - request concurrency/cancellation policy;
@@ -157,18 +208,20 @@ The kernel/feature boundary is defined in `docs/architecture/FEATURES_AND_EXTENS
 
 ## Current engine-spike boundary
 
-R0A has proved that stock LibreOfficeKit can be used headlessly for Writer document loading, layout, tile rendering, primitive text mutation and DOCX round-tripping without exposing LibreOffice types to product Rust code.
+R0A has proved that stock LibreOfficeKit can be used headlessly for Writer document loading, layout, tile rendering, primitive text mutation and DOCX round-tripping without exposing LibreOffice types to product Rust code. It has also proved that real LibreOffice state can be contained in a killable/restartable native process with explicit profile ownership.
 
-This is evidence for the engine boundary, not permission to bypass it. The production native adapter remains deliberately unfrozen.
+This is evidence for the engine boundary, not permission to bypass it. The production native adapter remains deliberately unfrozen while live semantic identity and callback behaviour are still being measured.
 
 ## Current protocol boundary
 
 The protocol value layer is explicitly process-safe at the primitive level: request IDs, revisions and temporary text offsets use fixed-width integers, and transactions validate resource/range invariants before mutation. `TextOffset` is a narrow bootstrap value only; it is not the future semantic anchor model used by history/comments/collaboration.
 
+The failed `w14` identity experiment strengthens that rule: neither temporary offsets nor incidental file-format IDs are accepted as semantic authority.
+
 ## Current transport boundary
 
 `document-transport` owns only bounded stream framing for opaque control bytes. It proves request correlation, framing-version checks, payload admission, short-read/write behaviour and precise EOF/truncation semantics without choosing the final message serializer or OS process channel.
 
-That framing has now been exercised across the actual Cargo-built `document-worker` child process. The disposable worker command codec proves process lifecycle and failure observation only; it must not become the product domain protocol by inertia.
+That framing concept has now been exercised across both the Cargo-built mock worker and the standalone native LibreOffice process adapter. Their disposable R0A command codecs prove process lifecycle and qualification behaviour only; they must not become the product domain protocol by inertia.
 
-The next boundary to qualify is a real LibreOffice-native executable/process adapter using the same architectural principle: native engine details stay on the worker side, while the host observes only bounded, typed process behaviour.
+The next boundary to qualify is the **live semantic projection**: normalized engine-side structure must cross the process boundary without exposing or depending on LibreOffice implementation types.
