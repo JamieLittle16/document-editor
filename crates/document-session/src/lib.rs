@@ -11,7 +11,10 @@ pub struct DocumentSession<E> {
 impl<E: DocumentEngine> DocumentSession<E> {
     #[must_use]
     pub const fn new(engine: E) -> Self {
-        Self { engine, revision: None }
+        Self {
+            engine,
+            revision: None,
+        }
     }
 
     pub fn open_text_fixture(&mut self, text: String) -> Result<DocumentRevision, EngineError> {

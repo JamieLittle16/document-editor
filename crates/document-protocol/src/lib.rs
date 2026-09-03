@@ -100,7 +100,9 @@ impl fmt::Display for ProtocolError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidRange => f.write_str("invalid text range"),
-            Self::NotACharacterBoundary => f.write_str("range is not on a UTF-8 character boundary"),
+            Self::NotACharacterBoundary => {
+                f.write_str("range is not on a UTF-8 character boundary")
+            }
             Self::RevisionConflict { expected, actual } => {
                 write!(f, "revision conflict: expected {expected}, actual {actual}")
             }
@@ -117,7 +119,14 @@ mod tests {
     #[test]
     fn text_edit_rejects_non_character_boundary() {
         let text = "aéz";
-        let edit = TextEdit { start_utf8: 2, end_utf8: 3, replacement: String::new() };
-        assert_eq!(edit.validate(text), Err(ProtocolError::NotACharacterBoundary));
+        let edit = TextEdit {
+            start_utf8: 2,
+            end_utf8: 3,
+            replacement: String::new(),
+        };
+        assert_eq!(
+            edit.validate(text),
+            Err(ProtocolError::NotACharacterBoundary)
+        );
     }
 }

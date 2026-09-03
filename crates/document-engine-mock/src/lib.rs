@@ -69,7 +69,10 @@ impl DocumentEngine for MockDocumentEngine {
 
         let previous_revision = self.revision;
         self.revision = self.revision.next();
-        Ok(TransactionApplied { previous_revision, new_revision: self.revision })
+        Ok(TransactionApplied {
+            previous_revision,
+            new_revision: self.revision,
+        })
     }
 }
 
@@ -88,7 +91,11 @@ mod tests {
         let result = engine
             .apply_transaction(DocumentTransaction {
                 expected_revision: DocumentRevision::INITIAL,
-                edits: vec![TextEdit { start_utf8: 6, end_utf8: 11, replacement: "editor".into() }],
+                edits: vec![TextEdit {
+                    start_utf8: 6,
+                    end_utf8: 11,
+                    replacement: "editor".into(),
+                }],
             })
             .unwrap();
 
@@ -103,7 +110,11 @@ mod tests {
         engine
             .apply_transaction(DocumentTransaction {
                 expected_revision: DocumentRevision::INITIAL,
-                edits: vec![TextEdit { start_utf8: 0, end_utf8: 1, replacement: "A".into() }],
+                edits: vec![TextEdit {
+                    start_utf8: 0,
+                    end_utf8: 1,
+                    replacement: "A".into(),
+                }],
             })
             .unwrap();
 

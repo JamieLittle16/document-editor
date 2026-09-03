@@ -4,7 +4,9 @@ use document_session::DocumentSession;
 
 fn main() {
     let mut session = DocumentSession::new(MockDocumentEngine::default());
-    session.open_text_fixture("Document editor architecture spike".into()).expect("open fixture");
+    session
+        .open_text_fixture("Document editor architecture spike".into())
+        .expect("open fixture");
     session
         .apply_transaction(DocumentTransaction {
             expected_revision: DocumentRevision::INITIAL,
