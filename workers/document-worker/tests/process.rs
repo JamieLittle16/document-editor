@@ -2,10 +2,10 @@ use std::io::Write;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use document_protocol::{ProtocolVersion, RequestId};
-use document_transport::{read_frame, write_frame, Frame, FrameKind};
+use document_transport::{Frame, FrameKind, read_frame, write_frame};
 use document_worker::{
-    R0A_CAPABILITIES_COMMAND, R0A_SHUTDOWN_COMMAND, R0A_SPIKE_FRAME_LIMITS,
-    R0A_STATUS_OK, R0A_STDIO_SPIKE_ARG,
+    R0A_CAPABILITIES_COMMAND, R0A_SHUTDOWN_COMMAND, R0A_SPIKE_FRAME_LIMITS, R0A_STATUS_OK,
+    R0A_STDIO_SPIKE_ARG,
 };
 
 struct WorkerProcess {
@@ -85,7 +85,10 @@ fn real_child_process_correlates_request_and_shuts_down_cleanly() {
 fn stdin_eof_is_a_clean_worker_exit() {
     let mut worker = WorkerProcess::spawn();
     drop(worker.input.take());
-    let status = worker.child.wait().expect("wait for EOF-driven worker exit");
+    let status = worker
+        .child
+        .wait()
+        .expect("wait for EOF-driven worker exit");
     assert!(status.success(), "worker exited unsuccessfully: {status}");
     assert!(
         read_frame(&mut worker.output, R0A_SPIKE_FRAME_LIMITS)
@@ -102,7 +105,10 @@ fn forced_worker_death_is_observable_and_fresh_process_can_restart() {
 
     first.child.kill().expect("force-kill worker");
     let status = first.child.wait().expect("wait for killed worker");
-    assert!(!status.success(), "force-killed worker unexpectedly succeeded");
+    assert!(
+        !status.success(),
+        "force-killed worker unexpectedly succeeded"
+    );
     drop(first.input.take());
     assert!(
         read_frame(&mut first.output, R0A_SPIKE_FRAME_LIMITS)

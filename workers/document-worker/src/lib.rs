@@ -5,7 +5,7 @@ use std::io::{self, Read, Write};
 
 use document_engine_api::DocumentEngine;
 use document_engine_mock::MockDocumentEngine;
-use document_transport::{read_frame, write_frame, Frame, FrameKind, FrameLimits, TransportError};
+use document_transport::{Frame, FrameKind, FrameLimits, TransportError, read_frame, write_frame};
 
 /// Enables the disposable R0A stdin/stdout process protocol.
 pub const R0A_STDIO_SPIKE_ARG: &str = "--r0a-stdio-spike";
@@ -102,14 +102,8 @@ fn handle_spike_request(engine: &MockDocumentEngine, payload: &[u8]) -> (Vec<u8>
             response.extend_from_slice(&capabilities.protocol.minor.to_le_bytes());
             (response, false)
         }
-        [R0A_SHUTDOWN_COMMAND] => (
-            vec![R0A_STATUS_OK, R0A_SHUTDOWN_COMMAND],
-            true,
-        ),
-        [command] => (
-            vec![R0A_STATUS_INVALID_REQUEST, *command],
-            false,
-        ),
+        [R0A_SHUTDOWN_COMMAND] => (vec![R0A_STATUS_OK, R0A_SHUTDOWN_COMMAND], true),
+        [command] => (vec![R0A_STATUS_INVALID_REQUEST, *command], false),
         _ => (vec![R0A_STATUS_INVALID_REQUEST, 0], false),
     }
 }

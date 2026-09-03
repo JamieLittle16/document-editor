@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use document_engine_api::DocumentEngine;
 use document_engine_mock::MockDocumentEngine;
-use document_worker::{run_r0a_stdio_spike, R0A_STDIO_SPIKE_ARG};
+use document_worker::{R0A_STDIO_SPIKE_ARG, run_r0a_stdio_spike};
 
 fn main() -> ExitCode {
     let mut arguments = env::args().skip(1);
