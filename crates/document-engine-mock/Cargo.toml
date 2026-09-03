@@ -1,0 +1,13 @@
+[package]
+name = "document-engine-mock"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+document-engine-api = { path = "../document-engine-api" }
+document-protocol = { path = "../document-protocol" }
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "app-core"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+document-engine-api = { path = "../document-engine-api" }
+document-session = { path = "../document-session" }
+
+[lints]
+workspace = true
