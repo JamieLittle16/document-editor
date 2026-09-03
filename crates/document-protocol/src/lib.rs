@@ -123,7 +123,8 @@ impl TextEdit {
             return Err(ProtocolError::InvalidRange);
         }
 
-        let start = usize::try_from(self.start_utf8.get()).map_err(|_| ProtocolError::InvalidRange)?;
+        let start =
+            usize::try_from(self.start_utf8.get()).map_err(|_| ProtocolError::InvalidRange)?;
         let end = usize::try_from(self.end_utf8.get()).map_err(|_| ProtocolError::InvalidRange)?;
         if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
             return Err(ProtocolError::NotACharacterBoundary);
@@ -202,11 +203,12 @@ impl DocumentTransaction {
         let mut ordered = Vec::with_capacity(self.edits.len());
 
         for edit in &self.edits {
-            let replacement_bytes = u64::try_from(edit.replacement.len())
-                .map_err(|_| ProtocolError::TransactionPayloadTooLarge {
+            let replacement_bytes = u64::try_from(edit.replacement.len()).map_err(|_| {
+                ProtocolError::TransactionPayloadTooLarge {
                     actual: u64::MAX,
                     max: limits.max_total_replacement_bytes,
-                })?;
+                }
+            })?;
             if replacement_bytes > limits.max_replacement_bytes {
                 return Err(ProtocolError::ReplacementTooLarge {
                     actual: replacement_bytes,
@@ -281,7 +283,10 @@ impl fmt::Display for ProtocolError {
                 formatter.write_str("document text is too large for protocol UTF-8 offsets")
             }
             Self::TooManyEdits { actual, max } => {
-                write!(formatter, "transaction contains {actual} edits; limit is {max}")
+                write!(
+                    formatter,
+                    "transaction contains {actual} edits; limit is {max}"
+                )
             }
             Self::ReplacementTooLarge { actual, max } => write!(
                 formatter,
@@ -292,7 +297,10 @@ impl fmt::Display for ProtocolError {
                 "transaction replacement payload contains {actual} bytes; limit is {max}"
             ),
             Self::RevisionConflict { expected, actual } => {
-                write!(formatter, "revision conflict: expected {expected}, actual {actual}")
+                write!(
+                    formatter,
+                    "revision conflict: expected {expected}, actual {actual}"
+                )
             }
         }
     }
@@ -415,7 +423,10 @@ mod tests {
 
         assert_eq!(
             transaction.validate_against("ab", TEST_LIMITS),
-            Err(ProtocolError::TransactionPayloadTooLarge { actual: 14, max: 12 })
+            Err(ProtocolError::TransactionPayloadTooLarge {
+                actual: 14,
+                max: 12
+            })
         );
     }
 
