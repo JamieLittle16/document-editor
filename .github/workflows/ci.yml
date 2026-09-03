@@ -84,3 +84,15 @@ jobs:
           print(f'roundtrip_bytes={path.stat().st_size}')
           print('persisted_edit=ok')
           PY
+      - name: Build LibreOfficeKit native process adapter
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
+            spikes/libreofficekit-process-adapter/adapter.cxx \
+            -ldl \
+            -o /tmp/document-editor-lok-process-adapter
+      - name: Qualify real-engine process lifecycle
+        run: |
+          python3 spikes/libreofficekit-process-adapter/process_harness.py \
+            /tmp/document-editor-lok-process-adapter \
+            /usr/lib/libreoffice/program \
+            /tmp/document-editor-lok-input.docx
