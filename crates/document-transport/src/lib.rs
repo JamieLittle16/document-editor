@@ -87,7 +87,7 @@ impl fmt::Display for TransportError {
         match self {
             Self::Io(error) => write!(formatter, "transport I/O error: {error}"),
             Self::BadMagic(actual) => {
-                write!(formatter, "invalid control-frame magic: {:02x?}", actual)
+                write!(formatter, "invalid control-frame magic: {actual:02x?}")
             }
             Self::UnsupportedFrameVersion { actual, supported } => write!(
                 formatter,
