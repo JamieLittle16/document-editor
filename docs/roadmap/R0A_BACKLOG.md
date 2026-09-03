@@ -44,6 +44,18 @@ Measure copy/IPC cost and only then choose shared-memory optimisation.
 
 **Outcome:** extract paragraphs/text/style/language subset with revision tagging. Investigate object/anchor identity stability under edits.
 
+Current evidence:
+- saved-file paragraph semantics are qualified across edit/save/reopen;
+- DOCX `w14:paraId` / `w14:textId` are rejected as authoritative identity;
+- public LOK accessibility/selection APIs are rejected as whole-document semantic enumeration;
+- same-instance access to the exact live LOK-owned Writer `XTextDocument` is qualified on pinned LibreOffice 24.2.7.2, including observation of an unsaved LOK mutation through the retained UNO reference.
+
+Remaining acceptance:
+- return a bounded native-neutral live semantic projection across the isolated engine boundary;
+- exercise insertion/deletion/split/merge/move/formatting edit sequences;
+- record candidate identity/reconciliation behaviour without freezing a product `ParagraphId` prematurely;
+- requalify save/reload reconciliation separately from live-instance behaviour.
+
 ## R0A.8 Worker failure recovery
 
 **Outcome:** forcibly kill worker during a session; shell harness remains alive and can restart/reopen checkpoint.

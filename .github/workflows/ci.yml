@@ -102,8 +102,7 @@ jobs:
             /tmp/document-editor-lok-process-adapter \
             /usr/lib/libreoffice/program \
             /tmp/document-editor-lok-input.docx
-      - name: Discover same-instance LibreOfficeKit to UNO bridge
-        continue-on-error: true
+      - name: Qualify same-instance Writer semantic access
         run: |
           rm -rf /tmp/document-editor-uno-generated /tmp/document-editor-lok-uno-profile
           mkdir -p /tmp/document-editor-uno-generated /tmp/document-editor-lok-uno-profile

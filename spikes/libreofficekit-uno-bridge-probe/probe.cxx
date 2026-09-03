@@ -24,14 +24,13 @@
 
 namespace css = com::sun::star;
 
-// R0A discovery only.
+// R0A qualification only.
 //
 // This is the exact LibreOffice 24.2 processfactory.hxx signature. It is an
 // internal LibreOffice symbol, intentionally declared locally rather than copied
-// into a project-wide wrapper. The probe may depend on this pinned native ABI
-// solely to answer whether an embedded LibreOfficeKit document can be reached
-// through the process UNO context. Production code MUST NOT depend on it without
-// a later ADR and a versioned native compatibility layer.
+// into a project-wide wrapper. This pinned qualification may depend on the
+// native ABI to prove same-instance semantic access. Product/native-adapter code
+// MUST NOT depend on it without a later ADR and a versioned compatibility layer.
 namespace comphelper
 {
 css::uno::Reference<css::uno::XComponentContext> getProcessComponentContext();

@@ -31,7 +31,9 @@ Last updated: 2026-09-03
 - file-format IDs and engine object addresses are evidence inputs, never product semantic identities by default;
 - semantic identity must be qualified through edits and reload before an anchor model is frozen;
 - public view/accessibility APIs are not promoted into semantic document APIs unless whole-document behaviour is directly qualified;
-- any deeper UNO/native semantic shim must prove that it operates on the same authoritative Writer instance rather than silently creating a second document authority.
+- deeper native semantics must operate on the same authoritative Writer instance rather than silently creating a second document authority;
+- same-instance Writer semantic access is now qualified for the pinned LibreOffice 24.2.7.2 environment, but its internal process-context ABI is qualification machinery rather than a production API;
+- production adoption of any LibreOffice-internal semantic bridge requires explicit versioning and an ADR rather than a project-wide wrapper grown from a spike.
 
 ## Implemented in repository skeleton
 
@@ -94,7 +96,12 @@ Last updated: 2026-09-03
 - recorded rejection of DOCX `w14:paraId` / `w14:textId` as product identity candidates after LibreOffice removed all seeded values on the qualified save path;
 - public-LOK live-semantic discovery showing that accessibility focus did not provide deterministic paragraph traversal and `SelectAll + getTextSelection()` returned no whole-document text in the headless adapter configuration;
 - removal of those unproven live-semantic commands from the mandatory native adapter qualification surface;
-- dedicated `SEMANTIC_IDENTITY_SPIKE.md` documenting both failed candidate classes and the same-instance constraint for the next native semantic shim.
+- version-pinned native UNO qualification that acquires exactly one Writer `XTextDocument` from the already-running LibreOfficeKit process rather than bootstrapping another office;
+- semantic enumeration of the three fixture paragraphs from that same live Writer model;
+- proof that the same retained UNO `XTextDocument` observes an unsaved prefix mutation made through the original LibreOfficeKit `Document` while preserving paragraph count/order and unrelated paragraph text;
+- same-instance Writer semantic qualification promoted from non-gating discovery to a required LibreOffice CI step;
+- the LibreOffice 24.2 `comphelper::getProcessComponentContext()` declaration remains local to the qualification probe because its ABI is internal and version-specific;
+- dedicated `SEMANTIC_IDENTITY_SPIKE.md` documenting rejected identity/snapshot candidates, the successful same-instance bridge, and the remaining identity/reconciliation frontier.
 
 ## Qualified LibreOfficeKit reference environment
 
@@ -176,22 +183,34 @@ SelectAll + getTextSelection: empty selected text
 
 These failures do not weaken the already-green engine/process boundary. They show that the tested public LOK view/accessibility APIs are not sufficient evidence for deterministic whole-document semantic extraction in this headless configuration.
 
-Stable product paragraph/object identity remains unresolved and must be established from a deeper same-instance native semantic layer or an explicit adapter reconciliation layer.
+A deeper same-instance native qualification has now succeeded. The probe loads the fixture once through LibreOfficeKit, obtains exactly one Writer `XTextDocument` from that same process, enumerates its three paragraphs, performs an unsaved prefix edit through the original LOK `Document`, and requires the same retained UNO reference to observe exactly that edit:
+
+```text
+same process component context: OK
+Writer XTextDocument count: 1
+paragraphs before edit: 3
+paragraphs after edit: 3
+same retained UNO reference sees unsaved LOK edit: OK
+same-instance bridge: OK
+```
+
+This proves **live same-authority semantic access** in the pinned reference environment. It does not prove stable product paragraph/object identity. The qualification currently uses LibreOffice's internal `comphelper::getProcessComponentContext()` ABI, whose exact 24.2 signature is declared only inside the spike. That mechanism is intentionally not a production dependency or cross-process contract.
 
 ## Immediate next engineering spikes
 
-1. Qualify **same-instance semantic model access** inside the quarantined native engine process. The spike must prove that the Writer `XTextDocument`/equivalent it inspects is the exact document already loaded by the LibreOfficeKit authority; a separately bootstrapped office/document does not count.
-2. Once same-instance access is proven, enumerate normalized paragraphs/runs through semantic document interfaces and return only bounded native-neutral records across the process boundary.
-3. Determine what engine-side paragraph/object properties, if any, remain stable through insertion, deletion, split, merge, move, formatting-only edits and save/reload; DOCX `w14` IDs are ruled out as authority.
-4. Exercise LibreOfficeKit callbacks/invalidation and map their ordering, threading and coalescing behaviour.
-5. Relate callback/invalidation events to semantic revisions so the host can know when cached semantic/render state is stale.
-6. Measure tile/render payload patterns to decide copy versus shared memory and batching thresholds.
-7. Build the first compatibility fixture runner around normalized semantic assertions rather than binary-package equality.
-8. Run UI framework qualification (Slint leading candidate, alternatives measured).
-9. Add generated/property tests for larger feature graphs before external plugin loading work begins.
-10. Define additive contribution registries only when the first real product feature needs commands/panels/diagnostics; do not invent a generic callback bus.
-11. Write the production native-adapter/unsafe-boundary ADR only after semantic and callback measurements constrain the design.
-12. Design document-session recovery only after live semantic identity and restart reconciliation evidence exist.
+1. Use the proven same-instance Writer access to return the smallest useful **bounded native-neutral semantic snapshot** across the isolated engine boundary. Start with ordered paragraph text plus only structural metadata needed by the next experiment; do not mirror UNO objects.
+2. Tag live semantic snapshots with explicit document/revision context so host-side caches cannot treat them as timeless state.
+3. Exercise insertion, deletion, split, merge, move and formatting-only edit sequences and measure candidate paragraph/object identity signals without freezing a product `ParagraphId`.
+4. Requalify identity/reconciliation across save/reload separately from live-instance behaviour; the failed DOCX `w14` candidates remain ruled out as authority.
+5. Exercise LibreOfficeKit callbacks/invalidation and map their ordering, threading and coalescing behaviour.
+6. Relate callback/invalidation events to semantic revisions so the host can know when cached semantic/render state is stale.
+7. Measure tile/render payload patterns to decide copy versus shared memory and batching thresholds.
+8. Build the first compatibility fixture runner around normalized semantic assertions rather than binary-package equality.
+9. Run UI framework qualification (Slint leading candidate, alternatives measured).
+10. Add generated/property tests for larger feature graphs before external plugin loading work begins.
+11. Define additive contribution registries only when the first real product feature needs commands/panels/diagnostics; do not invent a generic callback bus.
+12. Write the production native-adapter/unsafe-boundary ADR only after semantic identity and callback measurements constrain the design, including the versioning strategy for any internal LibreOffice bridge.
+13. Design document-session recovery only after live semantic identity and restart reconciliation evidence exist.
 
 ## Explicitly not started
 
@@ -223,15 +242,17 @@ The kernel/feature boundary is defined in `docs/architecture/FEATURES_AND_EXTENS
 
 R0A has proved that stock LibreOfficeKit can be used headlessly for Writer document loading, layout, tile rendering, primitive text mutation and DOCX round-tripping without exposing LibreOffice types to product Rust code. It has also proved that real LibreOffice state can be contained in a killable/restartable native process with explicit profile ownership.
 
-Public LOK view/accessibility APIs have **not** proved sufficient for whole-document live semantics. That negative result is now part of the boundary: the production adapter must not fake semantic enumeration through caret movement, accessibility focus or selection side effects.
+Public LOK view/accessibility APIs have **not** proved sufficient for whole-document live semantics. That negative result remains part of the boundary: the production adapter must not fake semantic enumeration through caret movement, accessibility focus or selection side effects.
 
-The production native adapter remains deliberately unfrozen while same-instance semantic-model access, stable identity and callback behaviour are still being measured.
+The deeper same-instance question is now resolved for the pinned R0A reference environment: a native semantic layer can reach the exact Writer document already owned by LOK and observe unsaved mutations on it. The mechanism currently touches a LibreOffice-internal, version-specific process-context ABI and therefore remains qualification-only.
+
+The production native adapter remains deliberately unfrozen while bounded semantic projection, stable identity, callback behaviour and the internal-ABI versioning strategy are still being measured.
 
 ## Current protocol boundary
 
 The protocol value layer is explicitly process-safe at the primitive level: request IDs, revisions and temporary text offsets use fixed-width integers, and transactions validate resource/range invariants before mutation. `TextOffset` is a narrow bootstrap value only; it is not the future semantic anchor model used by history/comments/collaboration.
 
-The failed `w14` identity experiment strengthens that rule: neither temporary offsets nor incidental file-format IDs are accepted as semantic authority.
+The failed `w14` identity experiment strengthens that rule: neither temporary offsets nor incidental file-format IDs are accepted as semantic authority. Likewise, successful access to UNO references does not make UNO object identity part of the product protocol.
 
 ## Current transport boundary
 
@@ -239,4 +260,4 @@ The failed `w14` identity experiment strengthens that rule: neither temporary of
 
 That framing concept has now been exercised across both the Cargo-built mock worker and the standalone native LibreOffice process adapter. Their disposable R0A command codecs prove process lifecycle and qualification behaviour only; they must not become the product domain protocol by inertia.
 
-The next boundary to qualify is **same-instance native semantic access**: normalized Writer structure must become observable without exposing LibreOffice implementation types or creating a second document authority.
+The next boundary to qualify is **bounded same-instance semantic projection**: normalized Writer structure must cross the isolated engine boundary without exposing LibreOffice implementation types, creating a second document authority or prematurely defining stable product identity.

@@ -8,9 +8,9 @@ The application needs semantic identities that can support selection recovery, h
 
 R0A therefore tests candidate identity signals before any permanent anchor model is designed.
 
-The first experiment asked whether DOCX paragraph identity metadata could be reused as a stable paragraph identity while LibreOffice is the authoritative bootstrap engine. The second experiment asked whether the public LibreOfficeKit view/accessibility surface can expose a deterministic whole-document **live, unsaved** semantic snapshot from that authoritative instance.
+The first experiment asked whether DOCX paragraph identity metadata could be reused as a stable paragraph identity while LibreOffice is the authoritative bootstrap engine. The second asked whether the public LibreOfficeKit view/accessibility surface could expose a deterministic whole-document **live, unsaved** semantic snapshot. The third asked whether the exact Writer document already loaded through LibreOfficeKit could be reached through a richer UNO semantic model **without creating a second document authority**.
 
-Both candidate routes are now constrained by executable evidence.
+All three questions are now constrained by executable evidence.
 
 ## Fixture
 
@@ -111,6 +111,51 @@ This is a capability conclusion for the tested LibreOffice 24.2.7.2 environment,
 
 The failed discovery commands were removed from the mandatory native process harness. The harness continues to gate only behaviour that is actually proven: initialization, load, typed failure, bounded framing, graceful shutdown, forced death and fresh restart. Failed semantic discovery remains documented evidence rather than a fake supported command.
 
+## Qualified same-instance Writer semantic access
+
+R0A then tested a deeper native-only route. The qualification process:
+
+1. initializes one LibreOffice process through `lok::lok_cpp_init`;
+2. loads the deterministic DOCX exactly once through that LibreOfficeKit authority;
+3. obtains the already-running LibreOffice process component context;
+4. obtains the process `Desktop` and requires exactly one live Writer `XTextDocument`;
+5. enumerates the three paragraphs from that `XTextDocument` through UNO semantic interfaces;
+6. performs a prefix edit through the original LibreOfficeKit `Document` **without saving**;
+7. re-enumerates through the same retained UNO `XTextDocument` reference;
+8. requires paragraph count/order to remain stable, paragraph 1 to contain the unsaved marker, and paragraphs 2-3 to remain unchanged.
+
+The qualified result is:
+
+```text
+same process component context: OK
+Writer XTextDocument count: 1
+paragraphs before edit: 3
+paragraphs after edit: 3
+same retained UNO reference sees unsaved LOK edit: OK
+same-instance bridge: OK
+```
+
+This is stronger than merely observing the same file twice. No separate UNO bootstrap is performed, no second document is loaded, and the semantic reference observes a mutation that has not passed through save/reopen. The qualification therefore proves that, in the pinned reference environment, a richer native semantic layer can inspect the **same authoritative live Writer document** owned by the LibreOfficeKit process.
+
+### Important implementation boundary
+
+The bridge currently reaches the process context through LibreOffice's internal `comphelper::getProcessComponentContext()` symbol. The probe declares the exact LibreOffice **24.2** signature locally; that version returns the component-context reference by value. This matters because later LibreOffice source uses a different signature.
+
+Therefore:
+
+- the same-instance capability is a **hard CI qualification** for the pinned LibreOffice 24.2.7.2 reference environment;
+- the internal symbol is **not** a product API and is not copied into a shared wrapper;
+- UNO and LibreOffice references remain entirely native-side;
+- Rust product crates gain no UNO dependency and no `unsafe` boundary from this result;
+- a production native semantic adapter requires an explicit versioned compatibility layer and ADR before this mechanism can be adopted;
+- upgrading the pinned LibreOffice version must requalify the native ABI rather than assuming source compatibility.
+
+### Conclusion: semantic access
+
+**Same-instance live Writer semantic access is now proven for the pinned R0A environment.**
+
+This resolves the acquisition question. It does **not** resolve stable paragraph/object identity. UNO paragraph objects, text ranges, implementation addresses and other engine-local handles are not automatically product identities simply because we can now enumerate them.
+
 ## What this spike proves
 
 - a small semantic paragraph projection can be compared independently of binary DOCX bytes;
@@ -119,35 +164,39 @@ The failed discovery commands were removed from the mandatory native process har
 - external OOXML paragraph IDs cannot currently be relied upon for stable product identity;
 - focused accessibility state is not a proven whole-document enumerator in the headless LOK process;
 - `SelectAll` plus `getTextSelection()` is not a proven whole-document live-text extractor in that process;
+- the exact live Writer document loaded by LOK can be acquired and enumerated through a native UNO semantic model in the pinned 24.2 environment;
+- the same retained UNO `XTextDocument` observes an unsaved mutation made through the LOK document authority;
+- a second office/document is unnecessary for this qualified semantic-access path;
 - binary package size and rendered raster hashes remain observations rather than semantic goldens;
-- unsupported discovery behaviour is removed from the gating adapter rather than weakened until it passes.
+- unsupported discovery behaviour is removed rather than weakened until it passes.
 
 ## What remains unresolved
 
-- live, unsaved semantic snapshot extraction from the authoritative Writer instance;
-- access to the same live Writer model through a richer native API without creating a second authoritative document instance;
+- the bounded native-neutral semantic snapshot shape exposed across the engine process boundary;
 - paragraph/object identity while the document remains open;
 - identity through insertion, deletion, split, merge, move and formatting-only edits;
 - identity through save/reload when external file metadata is absent or rewritten;
 - anchors inside a paragraph rather than only block identity;
 - tables, lists, fields, comments, tracked changes, images and other Writer structures;
-- reconciliation after engine-process loss and restart.
+- callback/invalidation ordering and its relation to semantic revisions;
+- reconciliation after engine-process loss and restart;
+- the production, versioned native compatibility mechanism for same-instance UNO access.
 
 ## Next experiment
 
-The next R0A identity experiment should qualify a **deeper native semantic shim**, rather than invent another file-format heuristic or coercing view APIs into a document-model API.
+The next R0A semantic experiment should build on the now-proven same-instance access rather than searching for another acquisition mechanism.
 
 The design constraints are strict:
 
-1. the semantic shim must operate on the **same authoritative Writer document instance** used by the engine process;
-2. a separate UNO-bootstrap office/document is not acceptable evidence for shared authority;
-3. LibreOffice/UNO/internal object references remain native-side and never cross the process boundary;
-4. only normalized, bounded semantic records may cross the boundary;
-5. the spike must prove how the native shim obtains the current Writer model before it is allowed to enumerate paragraphs;
-6. paragraph enumeration should then use Writer/UNO semantic interfaces rather than caret/view navigation;
-7. controlled edit sequences must test identity/reconciliation behaviour before any product `ParagraphId` or anchor contract is designed.
-
-LibreOffice's UNO text model does provide semantic paragraph enumeration once an `XTextDocument`/`XText` for the correct document is available. The open problem is therefore **same-instance acquisition**, not whether UNO can enumerate paragraphs in principle.
+1. keep all LibreOffice/UNO/internal references inside the quarantined native engine process;
+2. expose only normalized, bounded native-neutral records across the process boundary;
+3. begin with the smallest useful Writer projection (paragraph order/text plus carefully selected structural metadata), not a mirror of the UNO object model;
+4. tag semantic snapshots with explicit document/revision context rather than treating a query result as timeless;
+5. run controlled insertion, deletion, split, merge, move and formatting-only edits and measure candidate identity signals;
+6. distinguish stable engine-side properties from adapter reconciliation heuristics;
+7. do not define a product `ParagraphId` or anchor contract until those edit sequences establish its invariants;
+8. separately qualify save/reload reconciliation because live-instance stability does not imply persistence stability;
+9. keep the current internal 24.2 process-context declaration local until a production native compatibility ADR is justified.
 
 If the bootstrap engine provides no durable identity suitable for the product, the adapter will need an explicit identity/reconciliation layer rather than leaking engine addresses or falling back to text offsets.
 
@@ -159,7 +208,9 @@ This spike does not authorize:
 - using `TextOffset` as a history/comment/collaboration anchor;
 - exposing UNO or LibreOffice object references to Rust product code;
 - treating paragraph text hashes as identities;
+- treating UNO object/reference identity as product semantic identity;
 - freezing a permanent semantic snapshot wire schema;
 - requiring LibreOffice to reproduce today's OOXML serialization details;
 - launching a second office/document and treating its semantics as if they came from the live LOK authority;
-- relying on accessibility focus or selection side effects as structural document traversal.
+- relying on accessibility focus or selection side effects as structural document traversal;
+- promoting `comphelper::getProcessComponentContext()` into production code without explicit versioning and architectural review.
