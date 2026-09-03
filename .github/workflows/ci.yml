@@ -25,3 +25,50 @@ jobs:
         run: cargo test --workspace --all-targets
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  libreofficekit-probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LibreOfficeKit qualification dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            g++ \
+            libreofficekit-dev \
+            libreoffice-core-nogui \
+            libreoffice-writer-nogui
+      - name: Generate deterministic DOCX fixture
+        run: |
+          python3 spikes/libreofficekit-probe/make_fixture.py /tmp/document-editor-lok-input.docx
+          mkdir -p /tmp/document-editor-lok-profile
+      - name: Build LibreOfficeKit boundary probe
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
+            spikes/libreofficekit-probe/probe.cxx \
+            -ldl \
+            -o /tmp/document-editor-lok-probe
+      - name: Run LibreOfficeKit boundary probe
+        run: |
+          /tmp/document-editor-lok-probe \
+            /usr/lib/libreoffice/program \
+            file:///tmp/document-editor-lok-profile \
+            /tmp/document-editor-lok-input.docx \
+            /tmp/document-editor-lok-roundtrip.docx
+      - name: Validate round-trip package
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          path = Path('/tmp/document-editor-lok-roundtrip.docx')
+          if not path.is_file() or path.stat().st_size == 0:
+              raise SystemExit('round-trip DOCX is missing or empty')
+          with ZipFile(path) as archive:
+              bad = archive.testzip()
+              if bad is not None:
+                  raise SystemExit(f'corrupt round-trip member: {bad}')
+              if 'word/document.xml' not in archive.namelist():
+                  raise SystemExit('round-trip DOCX has no word/document.xml')
+          print(f'roundtrip_bytes={path.stat().st_size}')
+          PY
