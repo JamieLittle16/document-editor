@@ -18,6 +18,7 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -25,15 +26,15 @@ namespace css = com::sun::star;
 
 // R0A discovery only.
 //
-// This is an internal LibreOffice symbol, intentionally declared locally rather
-// than copied into a project-wide wrapper. The probe is allowed to depend on the
-// pinned LibreOffice 24.2 native ABI solely to answer one question: can an
-// embedded LibreOfficeKit document be reached through the process UNO context?
-// Production code MUST NOT depend on this declaration without a later ADR and a
-// versioned native compatibility layer.
+// This is the exact LibreOffice 24.2 processfactory.hxx signature. It is an
+// internal LibreOffice symbol, intentionally declared locally rather than copied
+// into a project-wide wrapper. The probe may depend on this pinned native ABI
+// solely to answer whether an embedded LibreOfficeKit document can be reached
+// through the process UNO context. Production code MUST NOT depend on it without
+// a later ADR and a versioned native compatibility layer.
 namespace comphelper
 {
-const css::uno::Reference<css::uno::XComponentContext>& getProcessComponentContext();
+css::uno::Reference<css::uno::XComponentContext> getProcessComponentContext();
 }
 
 namespace
@@ -87,7 +88,7 @@ bool equalsExpected(const std::vector<std::string>& paragraphs)
 
 css::uno::Reference<css::text::XTextDocument> findOnlyWriterDocument()
 {
-    const auto& context = comphelper::getProcessComponentContext();
+    const auto context = comphelper::getProcessComponentContext();
     if (!context.is())
         throw std::runtime_error("LibreOffice process component context is null");
 
