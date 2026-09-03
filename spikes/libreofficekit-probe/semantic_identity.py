@@ -34,25 +34,14 @@ class Paragraph:
 def snapshot(path: Path) -> tuple[Paragraph, ...]:
     with ZipFile(path) as archive:
         root = ElementTree.fromstring(archive.read("word/document.xml"))
-    paragraphs: list[Paragraph] = []
-    for node in root.iter(PARAGRAPH):
-        paragraphs.append(
-            Paragraph(
-                para_id=node.attrib.get(PARA_ID),
-                text_id=node.attrib.get(TEXT_ID),
-                text="".join(text.text or "" for text in node.iter(TEXT)),
-            )
+    return tuple(
+        Paragraph(
+            para_id=node.attrib.get(PARA_ID),
+            text_id=node.attrib.get(TEXT_ID),
+            text="".join(text.text or "" for text in node.iter(TEXT)),
         )
-    return tuple(paragraphs)
-
-
-def find_containing(paragraphs: tuple[Paragraph, ...], needle: str) -> Paragraph:
-    matches = [paragraph for paragraph in paragraphs if needle in paragraph.text]
-    if len(matches) != 1:
-        raise SystemExit(
-            f"expected exactly one paragraph containing {needle!r}; found {len(matches)}"
-        )
-    return matches[0]
+        for node in root.iter(PARAGRAPH)
+    )
 
 
 def main() -> int:
@@ -60,13 +49,13 @@ def main() -> int:
         print(f"usage: {Path(sys.argv[0]).name} INPUT.docx ROUNDTRIP.docx", file=sys.stderr)
         return 2
 
-    input_path = Path(sys.argv[1])
-    roundtrip_path = Path(sys.argv[2])
-    before = snapshot(input_path)
-    after = snapshot(roundtrip_path)
+    before = snapshot(Path(sys.argv[1]))
+    after = snapshot(Path(sys.argv[2]))
 
     if len(before) != len(EXPECTED):
-        raise SystemExit(f"fixture paragraph count changed: expected {len(EXPECTED)}, got {len(before)}")
+        raise SystemExit(
+            f"fixture paragraph count changed: expected {len(EXPECTED)}, got {len(before)}"
+        )
 
     for paragraph, (expected_para_id, expected_text_id, expected_text) in zip(
         before, EXPECTED, strict=True
@@ -74,36 +63,51 @@ def main() -> int:
         if paragraph != Paragraph(expected_para_id, expected_text_id, expected_text):
             raise SystemExit(f"fixture semantic projection changed unexpectedly: {paragraph!r}")
 
+    if len(after) != len(EXPECTED):
+        raise SystemExit(
+            "round-trip paragraph cardinality changed: "
+            f"expected {len(EXPECTED)}, got {len(after)}"
+        )
+
+    expected_after_text = (
+        EDIT_MARKER + EXPECTED[0][2],
+        EXPECTED[1][2],
+        EXPECTED[2][2],
+    )
+    actual_after_text = tuple(paragraph.text for paragraph in after)
+    if actual_after_text != expected_after_text:
+        raise SystemExit(
+            "round-trip semantic paragraph order/content changed unexpectedly: "
+            f"{actual_after_text!r}"
+        )
+
     para_ids = [paragraph.para_id for paragraph in after if paragraph.para_id is not None]
     if len(para_ids) != len(set(para_ids)):
         raise SystemExit("round-trip DOCX contains duplicate w14:paraId values")
 
-    matched_after = tuple(find_containing(after, expected_text) for _, _, expected_text in EXPECTED)
     preserved_para_ids = sum(
         paragraph.para_id == expected_para_id
-        for paragraph, (expected_para_id, _, _) in zip(matched_after, EXPECTED, strict=True)
+        for paragraph, (expected_para_id, _, _) in zip(after, EXPECTED, strict=True)
     )
     preserved_text_ids = sum(
         paragraph.text_id == expected_text_id
-        for paragraph, (_, expected_text_id, _) in zip(matched_after, EXPECTED, strict=True)
+        for paragraph, (_, expected_text_id, _) in zip(after, EXPECTED, strict=True)
     )
-
-    if not any(EDIT_MARKER in paragraph.text for paragraph in after):
-        raise SystemExit("round-trip semantic snapshot does not contain the LibreOffice edit marker")
 
     print(f"semantic_snapshot_input_paragraphs={len(before)}")
     print(f"semantic_snapshot_roundtrip_paragraphs={len(after)}")
-    print(f"semantic_snapshot_matched_paragraphs={len(matched_after)}")
+    print("semantic_snapshot_order_and_text=preserved")
+    print("semantic_snapshot_edit_locality=paragraph_1")
     print(f"semantic_snapshot_para_ids_present={len(para_ids)}")
     print(f"semantic_snapshot_para_ids_preserved={preserved_para_ids}/{len(EXPECTED)}")
     print(f"semantic_snapshot_text_ids_preserved={preserved_text_ids}/{len(EXPECTED)}")
-    for index, paragraph in enumerate(matched_after, start=1):
+    for index, paragraph in enumerate(after, start=1):
         print(
             "semantic_snapshot_after_"
             f"{index}=paraId:{paragraph.para_id or '-'},textId:{paragraph.text_id or '-'},"
             f"text:{paragraph.text}"
         )
-    print("semantic_snapshot_status=measured")
+    print("semantic_snapshot_status=qualified")
     return 0
 
 
