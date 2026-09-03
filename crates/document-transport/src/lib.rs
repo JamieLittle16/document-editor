@@ -74,34 +74,21 @@ impl Frame {
 pub enum TransportError {
     Io(io::Error),
     BadMagic([u8; 4]),
-    UnsupportedFrameVersion {
-        actual: u16,
-        supported: u16,
-    },
+    UnsupportedFrameVersion { actual: u16, supported: u16 },
     UnknownFrameKind(u8),
     UnsupportedFlags(u8),
-    PayloadTooLarge {
-        actual: u64,
-        max: u32,
-    },
-    TruncatedHeader {
-        received: usize,
-    },
-    TruncatedPayload {
-        expected: u32,
-        received: u32,
-    },
+    PayloadTooLarge { actual: u64, max: u32 },
+    TruncatedHeader { received: usize },
+    TruncatedPayload { expected: u32, received: u32 },
 }
 
 impl fmt::Display for TransportError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => write!(formatter, "transport I/O error: {error}"),
-            Self::BadMagic(actual) => write!(
-                formatter,
-                "invalid control-frame magic: {:02x?}",
-                actual
-            ),
+            Self::BadMagic(actual) => {
+                write!(formatter, "invalid control-frame magic: {:02x?}", actual)
+            }
             Self::UnsupportedFrameVersion { actual, supported } => write!(
                 formatter,
                 "unsupported control-frame version {actual}; supported version is {supported}"
@@ -156,12 +143,11 @@ pub fn write_frame<W: Write>(
         });
     }
 
-    let payload_len = u32::try_from(frame.payload.len()).map_err(|_| {
-        TransportError::PayloadTooLarge {
+    let payload_len =
+        u32::try_from(frame.payload.len()).map_err(|_| TransportError::PayloadTooLarge {
             actual: actual_payload_len,
             max: limits.max_control_payload_bytes,
-        }
-    })?;
+        })?;
 
     let header = encode_header(frame.kind, frame.request_id, payload_len);
     writer.write_all(&header)?;
