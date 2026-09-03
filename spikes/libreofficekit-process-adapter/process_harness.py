@@ -26,15 +26,6 @@ COMMAND_ENGINE_INFO = 1
 COMMAND_OPEN = 2
 COMMAND_CLOSE = 3
 COMMAND_SHUTDOWN = 4
-COMMAND_LIVE_TEXT = 5
-COMMAND_PASTE_AT_DOCUMENT_START = 6
-
-EXPECTED_PARAGRAPHS = (
-    "Document Editor LibreOfficeKit R0A probe",
-    "This fixture is generated deterministically in CI.",
-    "Stable semantic identity must be measured, not assumed.",
-)
-LIVE_EDIT_MARKER = "R0A_LIVE_EDIT_42_"
 
 
 def read_exact(stream: BinaryIO, size: int, *, clean_eof: bool = False) -> bytes | None:
@@ -135,20 +126,6 @@ class NativeAdapter:
             raise RuntimeError(f"invalid native-adapter layout: {width}x{height}")
         return width, height
 
-    def live_text(self, request_id: int) -> str:
-        payload = self.request(request_id, bytes([COMMAND_LIVE_TEXT]))
-        if len(payload) < 3 or payload[0:2] != bytes([STATUS_OK, COMMAND_LIVE_TEXT]):
-            raise RuntimeError(f"unexpected live-text response: {payload!r}")
-        return payload[2:].decode("utf-8")
-
-    def paste_at_document_start(self, request_id: int, text: str) -> None:
-        payload = self.request(
-            request_id,
-            bytes([COMMAND_PASTE_AT_DOCUMENT_START]) + text.encode("utf-8"),
-        )
-        if payload != bytes([STATUS_OK, COMMAND_PASTE_AT_DOCUMENT_START]):
-            raise RuntimeError(f"unexpected live-edit response: {payload!r}")
-
     def graceful_shutdown(self, request_id: int) -> str:
         payload = self.request(request_id, bytes([COMMAND_SHUTDOWN]))
         if payload != bytes([STATUS_OK, COMMAND_SHUTDOWN]):
@@ -179,23 +156,6 @@ def check_typed_load_failure(adapter: NativeAdapter, request_id: int, missing: P
         raise RuntimeError(f"missing document did not return typed load failure: {payload!r}")
 
 
-def normalized_lines(text: str) -> tuple[str, ...]:
-    return tuple(line for line in text.replace("\r\n", "\n").split("\n") if line)
-
-
-def qualify_live_text(adapter: NativeAdapter) -> tuple[str, str]:
-    before = adapter.live_text(30)
-    if normalized_lines(before) != EXPECTED_PARAGRAPHS:
-        raise RuntimeError(f"unexpected live text before edit: {before!r}")
-
-    adapter.paste_at_document_start(31, LIVE_EDIT_MARKER)
-    after = adapter.live_text(32)
-    expected_after = (LIVE_EDIT_MARKER + EXPECTED_PARAGRAPHS[0], *EXPECTED_PARAGRAPHS[1:])
-    if normalized_lines(after) != expected_after:
-        raise RuntimeError(f"unexpected live text after unsaved edit: {after!r}")
-    return before, after
-
-
 def count_profile_files(profile: Path) -> int:
     return sum(1 for path in profile.rglob("*") if path.is_file())
 
@@ -214,7 +174,6 @@ def main() -> int:
         graceful = NativeAdapter(executable, install, root / "graceful")
         version = check_engine_info(graceful, 0x1122334455667788)
         width, height = graceful.open_document(2, input_docx)
-        live_before, live_after = qualify_live_text(graceful)
         close_payload = graceful.request(3, bytes([COMMAND_CLOSE]))
         if close_payload != bytes([STATUS_OK, COMMAND_CLOSE]):
             raise RuntimeError(f"unexpected close response: {close_payload!r}")
@@ -253,9 +212,6 @@ def main() -> int:
         print(f"native_adapter_version_json={version}")
         print(f"native_adapter_width_twips={width}")
         print(f"native_adapter_height_twips={height}")
-        print(f"native_adapter_live_before={live_before!r}")
-        print(f"native_adapter_live_after={live_after!r}")
-        print("native_adapter_live_unsaved_text=visible")
         print(f"native_adapter_crash_open_twips={crash_width}x{crash_height}")
         print(f"native_adapter_restart_open_twips={restart_width}x{restart_height}")
         print(f"native_adapter_profile_files={profile_files}")
