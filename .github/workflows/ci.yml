@@ -84,6 +84,11 @@ jobs:
           print(f'roundtrip_bytes={path.stat().st_size}')
           print('persisted_edit=ok')
           PY
+      - name: Measure semantic paragraph identity across edit and round-trip
+        run: |
+          python3 spikes/libreofficekit-probe/semantic_identity.py \
+            /tmp/document-editor-lok-input.docx \
+            /tmp/document-editor-lok-roundtrip.docx
       - name: Build LibreOfficeKit native process adapter
         run: |
           g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
