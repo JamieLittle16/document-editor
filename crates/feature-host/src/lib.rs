@@ -202,22 +202,23 @@ impl FeatureHost {
                 .activate(&context);
 
             if let Err(error) = activation {
-                let mut rollback_failures = Vec::new();
-
-                if let Err(cleanup_error) = self
+                let failing_cleanup = self
                     .features
                     .get_mut(&feature_id)
                     .expect("failing feature implementation remains registered")
-                    .deactivate()
-                {
-                    self.active.push(feature_id.clone());
-                    rollback_failures.push(FeatureFailure {
-                        feature: feature_id.clone(),
-                        error: cleanup_error,
-                    });
-                }
+                    .deactivate();
 
-                rollback_failures.extend(self.deactivate_active_except(&feature_id));
+                let mut rollback_failures = self.deactivate_all_active();
+                if let Err(cleanup_error) = failing_cleanup {
+                    self.active.push(feature_id.clone());
+                    rollback_failures.insert(
+                        0,
+                        FeatureFailure {
+                            feature: feature_id.clone(),
+                            error: cleanup_error,
+                        },
+                    );
+                }
                 self.finish_cleanup_state();
 
                 return Err(HostStartError::Activation {
@@ -253,27 +254,12 @@ impl FeatureHost {
         }
     }
 
-    fn deactivate_active_except(&mut self, excluded: &FeatureId) -> Vec<FeatureFailure> {
-        let active = self
-            .active
-            .iter()
-            .rev()
-            .filter(|feature| *feature != excluded)
-            .cloned()
-            .collect::<Vec<_>>();
-        self.deactivate_ids(active)
-    }
-
     fn deactivate_all_active(&mut self) -> Vec<FeatureFailure> {
         let active = self.active.iter().rev().cloned().collect::<Vec<_>>();
-        self.deactivate_ids(active)
-    }
-
-    fn deactivate_ids(&mut self, ids: Vec<FeatureId>) -> Vec<FeatureFailure> {
         let mut failures = Vec::new();
         let mut failed = Vec::new();
 
-        for feature_id in ids {
+        for feature_id in active {
             let result = self
                 .features
                 .get_mut(&feature_id)
@@ -325,7 +311,10 @@ impl fmt::Display for HostRegistrationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidState(state) => {
-                write!(formatter, "cannot register bundled feature while host is {state:?}")
+                write!(
+                    formatter,
+                    "cannot register bundled feature while host is {state:?}"
+                )
             }
             Self::ExternalFeature(feature) => write!(
                 formatter,
@@ -339,7 +328,10 @@ impl fmt::Display for HostRegistrationError {
                 "feature manifest id {manifest} does not match implementation id {implementation}"
             ),
             Self::DuplicateImplementation(feature) => {
-                write!(formatter, "feature implementation {feature} is already registered")
+                write!(
+                    formatter,
+                    "feature implementation {feature} is already registered"
+                )
             }
             Self::Catalogue(error) => error.fmt(formatter),
         }
@@ -378,9 +370,14 @@ impl fmt::Display for HostStartError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidState(state) => {
-                write!(formatter, "cannot start bundled features while host is {state:?}")
+                write!(
+                    formatter,
+                    "cannot start bundled features while host is {state:?}"
+                )
             }
-            Self::Resolution(error) => write!(formatter, "feature profile resolution failed: {error}"),
+            Self::Resolution(error) => {
+                write!(formatter, "feature profile resolution failed: {error}")
+            }
             Self::MissingImplementation(feature) => write!(
                 formatter,
                 "resolved feature {feature} has no registered bundled implementation"
@@ -519,11 +516,7 @@ mod tests {
         FeatureManifest::new(feature_id(id), FeatureOrigin::Bundled)
     }
 
-    fn register(
-        host: &mut FeatureHost,
-        manifest: FeatureManifest,
-        feature: RecordingFeature,
-    ) {
+    fn register(host: &mut FeatureHost, manifest: FeatureManifest, feature: RecordingFeature) {
         host.register(manifest, Box::new(feature))
             .expect("test feature registers");
     }
@@ -661,6 +654,47 @@ mod tests {
         let stop = host.stop().expect_err("feature a still fails cleanup");
         assert_eq!(stop.failures().len(), 1);
         assert_eq!(host.state(), HostState::Faulted);
+    }
+
+    #[test]
+    fn failing_activator_cleanup_failure_remains_tracked() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut host = FeatureHost::new();
+
+        register(
+            &mut host,
+            bundled("feature.a").default_enabled(true),
+            RecordingFeature::new("feature.a", Arc::clone(&events)),
+        );
+        register(
+            &mut host,
+            bundled("feature.b")
+                .default_enabled(true)
+                .depends_on(feature_id("feature.a")),
+            RecordingFeature::new("feature.b", Arc::clone(&events))
+                .fail_activate()
+                .fail_deactivate(),
+        );
+
+        let result = host.start(&FeatureSelection::new());
+        assert!(matches!(
+            result,
+            Err(HostStartError::Activation {
+                rollback_failures,
+                ..
+            }) if rollback_failures.len() == 1
+        ));
+        assert_eq!(host.state(), HostState::Faulted);
+        assert_eq!(host.active_features(), [feature_id("feature.b")]);
+        assert_eq!(
+            *events.lock().expect("test log mutex"),
+            [
+                "activate:feature.a",
+                "activate:feature.b",
+                "deactivate:feature.b",
+                "deactivate:feature.a"
+            ]
+        );
     }
 
     #[test]
