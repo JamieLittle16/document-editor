@@ -9,6 +9,7 @@ members = [
   "crates/document-engine-mock",
   "crates/extension-api",
   "crates/extension-runtime",
+  "crates/feature-host",
   "workers/document-worker",
 ]
 

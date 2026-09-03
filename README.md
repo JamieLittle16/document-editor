@@ -17,6 +17,7 @@ Build the document editor we would voluntarily choose over Microsoft Word and ON
 - **Heavyweight engines run out of process.** A document worker can crash, hang, or be restarted without taking down the shell or other documents.
 - **Every mutation is conceptually transactional and revisioned.** This underpins undo, recovery, collaboration, plugins, diagnostics, and AI edits.
 - **Minimal kernel, modular product.** Correctness/authority invariants stay in a small kernel; bundled features use explicit feature/service contracts so they can be disabled, replaced or extended where appropriate.
+- **Supervised feature lifecycle.** Trusted bundled modules are resolved before activation, start in dependency order, roll back on failure and shut down in reverse order; external extensions will use a separate sandbox host.
 - **Local-first and offline-capable.** Cloud and AI are enhancements rather than requirements.
 - **One suite shell eventually; separate domain modules and engines internally.** Documents come first. Spreadsheet and presentation work begins only after the document editor is excellent.
 
@@ -37,6 +38,7 @@ crates/document-session/         revisions, anchors, session state
 crates/document-engine-mock/     deterministic reference/mock engine
 crates/extension-api/            stable feature/service composition contracts
 crates/extension-runtime/        deterministic feature/provider resolution
+crates/feature-host/             supervised trusted bundled-feature lifecycle
 workers/document-worker/         isolated document-engine host
 
 docs/product/                    what we are building and why
@@ -51,11 +53,12 @@ docs/roadmap/                    release programme
 1. [`docs/product/PRODUCT_CONSTITUTION.md`](docs/product/PRODUCT_CONSTITUTION.md)
 2. [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md)
 3. [`docs/architecture/FEATURES_AND_EXTENSIONS.md`](docs/architecture/FEATURES_AND_EXTENSIONS.md)
-4. [`docs/engineering/ENGINEERING_CONTRACT.md`](docs/engineering/ENGINEERING_CONTRACT.md)
-5. [`docs/product/R1_FEATURE_MATRIX.md`](docs/product/R1_FEATURE_MATRIX.md)
-6. [`docs/product/90_DAY_PLAN.md`](docs/product/90_DAY_PLAN.md)
-7. [`docs/engineering/TECHNICAL_DEBT.md`](docs/engineering/TECHNICAL_DEBT.md)
-8. [`docs/decisions/`](docs/decisions/)
+4. [`docs/architecture/FEATURE_HOST.md`](docs/architecture/FEATURE_HOST.md)
+5. [`docs/engineering/ENGINEERING_CONTRACT.md`](docs/engineering/ENGINEERING_CONTRACT.md)
+6. [`docs/product/R1_FEATURE_MATRIX.md`](docs/product/R1_FEATURE_MATRIX.md)
+7. [`docs/product/90_DAY_PLAN.md`](docs/product/90_DAY_PLAN.md)
+8. [`docs/engineering/TECHNICAL_DEBT.md`](docs/engineering/TECHNICAL_DEBT.md)
+9. [`docs/decisions/`](docs/decisions/)
 
 ## Build
 
@@ -72,7 +75,7 @@ A subsystem is not considered implemented if a capable new contributor or coding
 
 ## Modularity rule
 
-A new major product feature should normally declare its identity, dependencies and service/contribution contracts instead of reaching into unrelated feature implementations. Kernel invariants remain deliberately non-optional. See [`docs/architecture/FEATURES_AND_EXTENSIONS.md`](docs/architecture/FEATURES_AND_EXTENSIONS.md) and ADR-0006.
+A new major product feature should normally declare its identity, dependencies and service/contribution contracts instead of reaching into unrelated feature implementations. Kernel invariants remain deliberately non-optional. See [`docs/architecture/FEATURES_AND_EXTENSIONS.md`](docs/architecture/FEATURES_AND_EXTENSIONS.md), [`docs/architecture/FEATURE_HOST.md`](docs/architecture/FEATURE_HOST.md) and ADR-0006.
 
 ## Licence
 
