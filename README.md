@@ -6,7 +6,7 @@ The repository name and branding are intentionally provisional. Architecture is 
 
 ## Mission
 
-Build the document editor we would voluntarily choose over Microsoft Word and ONLYOFFICE for everyday, technical, and long-form writing: fast, reliable, excellent at DOCX interoperability, unusually strong at proofreading and document diagnostics, and architecturally capable of evolving beyond its bootstrap engine.
+Build the document editor we would voluntarily choose over Microsoft Word and ONLYOFFICE for everyday, technical, and long-form writing: fast, reliable, excellent at DOCX interoperability, unusually strong at proofreading and document diagnostics, deeply customisable, and architecturally capable of evolving beyond its bootstrap engine.
 
 ## Architectural position
 
@@ -16,6 +16,7 @@ Build the document editor we would voluntarily choose over Microsoft Word and ON
 - **One authoritative document model at a time.** During the bootstrap phase, the compatibility engine owns complete document state; Rust maintains revisioned semantic projections for product features.
 - **Heavyweight engines run out of process.** A document worker can crash, hang, or be restarted without taking down the shell or other documents.
 - **Every mutation is conceptually transactional and revisioned.** This underpins undo, recovery, collaboration, plugins, diagnostics, and AI edits.
+- **Minimal kernel, modular product.** Correctness/authority invariants stay in a small kernel; bundled features use explicit feature/service contracts so they can be disabled, replaced or extended where appropriate.
 - **Local-first and offline-capable.** Cloud and AI are enhancements rather than requirements.
 - **One suite shell eventually; separate domain modules and engines internally.** Documents come first. Spreadsheet and presentation work begins only after the document editor is excellent.
 
@@ -34,6 +35,8 @@ crates/document-protocol/        versioned protocol value types
 crates/document-engine-api/      engine abstraction
 crates/document-session/         revisions, anchors, session state
 crates/document-engine-mock/     deterministic reference/mock engine
+crates/extension-api/            stable feature/service composition contracts
+crates/extension-runtime/        deterministic feature/provider resolution
 workers/document-worker/         isolated document-engine host
 
 docs/product/                    what we are building and why
@@ -47,11 +50,12 @@ docs/roadmap/                    release programme
 
 1. [`docs/product/PRODUCT_CONSTITUTION.md`](docs/product/PRODUCT_CONSTITUTION.md)
 2. [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md)
-3. [`docs/engineering/ENGINEERING_CONTRACT.md`](docs/engineering/ENGINEERING_CONTRACT.md)
-4. [`docs/product/R1_FEATURE_MATRIX.md`](docs/product/R1_FEATURE_MATRIX.md)
-5. [`docs/product/90_DAY_PLAN.md`](docs/product/90_DAY_PLAN.md)
-6. [`docs/engineering/TECHNICAL_DEBT.md`](docs/engineering/TECHNICAL_DEBT.md)
-7. [`docs/decisions/`](docs/decisions/)
+3. [`docs/architecture/FEATURES_AND_EXTENSIONS.md`](docs/architecture/FEATURES_AND_EXTENSIONS.md)
+4. [`docs/engineering/ENGINEERING_CONTRACT.md`](docs/engineering/ENGINEERING_CONTRACT.md)
+5. [`docs/product/R1_FEATURE_MATRIX.md`](docs/product/R1_FEATURE_MATRIX.md)
+6. [`docs/product/90_DAY_PLAN.md`](docs/product/90_DAY_PLAN.md)
+7. [`docs/engineering/TECHNICAL_DEBT.md`](docs/engineering/TECHNICAL_DEBT.md)
+8. [`docs/decisions/`](docs/decisions/)
 
 ## Build
 
@@ -65,6 +69,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 ## Documentation rule
 
 A subsystem is not considered implemented if a capable new contributor or coding agent cannot discover its responsibilities, invariants, dependencies, test strategy and failure modes from the repository. See [`docs/engineering/DOCUMENTATION_POLICY.md`](docs/engineering/DOCUMENTATION_POLICY.md).
+
+## Modularity rule
+
+A new major product feature should normally declare its identity, dependencies and service/contribution contracts instead of reaching into unrelated feature implementations. Kernel invariants remain deliberately non-optional. See [`docs/architecture/FEATURES_AND_EXTENSIONS.md`](docs/architecture/FEATURES_AND_EXTENSIONS.md) and ADR-0006.
 
 ## Licence
 
