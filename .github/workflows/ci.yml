@@ -90,32 +90,23 @@ jobs:
           python3 spikes/libreofficekit-probe/semantic_identity.py \
             /tmp/document-editor-lok-input.docx \
             /tmp/document-editor-lok-roundtrip.docx
-      - name: Build LibreOfficeKit native process adapter
+      - name: Generate pinned UNO SDK headers for native semantic qualification
         run: |
-          g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
-            spikes/libreofficekit-process-adapter/adapter.cxx \
-            -ldl \
-            -o /tmp/document-editor-lok-process-adapter
-      - name: Qualify real-engine process lifecycle
-        run: |
-          python3 spikes/libreofficekit-process-adapter/process_harness.py \
-            /tmp/document-editor-lok-process-adapter \
-            /usr/lib/libreoffice/program \
-            /tmp/document-editor-lok-input.docx
-      - name: Qualify same-instance Writer semantic access
-        run: |
-          rm -rf /tmp/document-editor-uno-generated /tmp/document-editor-lok-uno-profile
-          mkdir -p /tmp/document-editor-uno-generated /tmp/document-editor-lok-uno-profile
+          rm -rf /tmp/document-editor-uno-generated
+          mkdir -p /tmp/document-editor-uno-generated
           /usr/lib/libreoffice/sdk/bin/cppumaker \
             -Gc \
             -O/tmp/document-editor-uno-generated \
             /usr/lib/libreoffice/program/types.rdb \
             /usr/lib/libreoffice/program/types/offapi.rdb
+      - name: Build LibreOfficeKit native process adapter
+        run: |
           g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
             -I/usr/include/libreoffice \
             -I/usr/include/x86_64-linux-gnu/libreoffice \
             -I/tmp/document-editor-uno-generated \
-            spikes/libreofficekit-uno-bridge-probe/probe.cxx \
+            spikes/libreofficekit-process-adapter/adapter.cxx \
+            spikes/libreofficekit-process-adapter/writer_semantics_24_2.cxx \
             -L/usr/lib/libreoffice/program \
             -L/usr/lib/libreoffice/sdk/lib \
             -Wl,-rpath,/usr/lib/libreoffice/program \
@@ -126,8 +117,10 @@ jobs:
             -luno_salhelpergcc3 \
             -luno_sal \
             -ldl \
-            -o /tmp/document-editor-lok-uno-bridge-probe
-          /tmp/document-editor-lok-uno-bridge-probe \
+            -o /tmp/document-editor-lok-process-adapter
+      - name: Qualify real-engine lifecycle and same-instance semantics
+        run: |
+          python3 spikes/libreofficekit-process-adapter/process_harness.py \
+            /tmp/document-editor-lok-process-adapter \
             /usr/lib/libreoffice/program \
-            file:///tmp/document-editor-lok-uno-profile \
             /tmp/document-editor-lok-input.docx

@@ -21,11 +21,23 @@ MAX_PAYLOAD = 1024
 STATUS_OK = 0
 STATUS_INVALID_REQUEST = 1
 STATUS_LOAD_FAILED = 2
+STATUS_ENGINE_STATE = 4
+STATUS_LIMIT_EXCEEDED = 5
 
 COMMAND_ENGINE_INFO = 1
 COMMAND_OPEN = 2
 COMMAND_CLOSE = 3
 COMMAND_SHUTDOWN = 4
+COMMAND_SEMANTIC_SNAPSHOT = 5
+COMMAND_INSERT_PREFIX = 6
+
+SEMANTIC_PROJECTION_VERSION = 1
+EXPECTED_PARAGRAPHS = (
+    "Document Editor LibreOfficeKit R0A probe",
+    "This fixture is generated deterministically in CI.",
+    "Stable semantic identity must be measured, not assumed.",
+)
+LIVE_PREFIX = "R0A_PROCESS_SEMANTIC_2D7E_"
 
 
 def read_exact(stream: BinaryIO, size: int, *, clean_eof: bool = False) -> bytes | None:
@@ -126,6 +138,36 @@ class NativeAdapter:
             raise RuntimeError(f"invalid native-adapter layout: {width}x{height}")
         return width, height
 
+    def semantic_snapshot(self, request_id: int) -> tuple[str, ...]:
+        payload = self.request(request_id, bytes([COMMAND_SEMANTIC_SNAPSHOT]))
+        if len(payload) < 5 or payload[0:3] != bytes(
+            [STATUS_OK, COMMAND_SEMANTIC_SNAPSHOT, SEMANTIC_PROJECTION_VERSION]
+        ):
+            raise RuntimeError(f"unexpected semantic-snapshot response: {payload!r}")
+
+        paragraph_count = struct.unpack_from("<H", payload, 3)[0]
+        offset = 5
+        paragraphs: list[str] = []
+        for _ in range(paragraph_count):
+            if offset + 2 > len(payload):
+                raise RuntimeError("truncated semantic paragraph length")
+            text_bytes = struct.unpack_from("<H", payload, offset)[0]
+            offset += 2
+            end = offset + text_bytes
+            if end > len(payload):
+                raise RuntimeError("truncated semantic paragraph text")
+            paragraphs.append(payload[offset:end].decode("utf-8"))
+            offset = end
+        if offset != len(payload):
+            raise RuntimeError("semantic snapshot contains trailing bytes")
+        return tuple(paragraphs)
+
+    def insert_prefix(self, request_id: int, prefix: str) -> None:
+        encoded = prefix.encode("utf-8")
+        payload = self.request(request_id, bytes([COMMAND_INSERT_PREFIX]) + encoded)
+        if payload != bytes([STATUS_OK, COMMAND_INSERT_PREFIX]):
+            raise RuntimeError(f"unexpected prefix-edit response: {payload!r}")
+
     def graceful_shutdown(self, request_id: int) -> str:
         payload = self.request(request_id, bytes([COMMAND_SHUTDOWN]))
         if payload != bytes([STATUS_OK, COMMAND_SHUTDOWN]):
@@ -156,6 +198,14 @@ def check_typed_load_failure(adapter: NativeAdapter, request_id: int, missing: P
         raise RuntimeError(f"missing document did not return typed load failure: {payload!r}")
 
 
+def check_semantic_limit(adapter: NativeAdapter, request_id: int) -> None:
+    payload = adapter.request(request_id, bytes([COMMAND_SEMANTIC_SNAPSHOT]))
+    if len(payload) < 2 or payload[0:2] != bytes(
+        [STATUS_LIMIT_EXCEEDED, COMMAND_SEMANTIC_SNAPSHOT]
+    ):
+        raise RuntimeError(f"oversized semantic snapshot was not typed limit rejection: {payload!r}")
+
+
 def count_profile_files(profile: Path) -> int:
     return sum(1 for path in profile.rglob("*") if path.is_file())
 
@@ -174,17 +224,44 @@ def main() -> int:
         graceful = NativeAdapter(executable, install, root / "graceful")
         version = check_engine_info(graceful, 0x1122334455667788)
         width, height = graceful.open_document(2, input_docx)
-        close_payload = graceful.request(3, bytes([COMMAND_CLOSE]))
+
+        before = graceful.semantic_snapshot(3)
+        if before != EXPECTED_PARAGRAPHS:
+            raise RuntimeError(f"unexpected live semantic snapshot before edit: {before!r}")
+        graceful.insert_prefix(4, LIVE_PREFIX)
+        after = graceful.semantic_snapshot(5)
+        expected_after = (LIVE_PREFIX + EXPECTED_PARAGRAPHS[0], *EXPECTED_PARAGRAPHS[1:])
+        if after != expected_after:
+            raise RuntimeError(f"same-instance semantic snapshot missed unsaved edit: {after!r}")
+
+        close_payload = graceful.request(6, bytes([COMMAND_CLOSE]))
         if close_payload != bytes([STATUS_OK, COMMAND_CLOSE]):
             raise RuntimeError(f"unexpected close response: {close_payload!r}")
-        check_typed_load_failure(graceful, 4, root / "does-not-exist.docx")
-        graceful.graceful_shutdown(5)
+        closed_snapshot = graceful.request(7, bytes([COMMAND_SEMANTIC_SNAPSHOT]))
+        if len(closed_snapshot) < 2 or closed_snapshot[0:2] != bytes(
+            [STATUS_ENGINE_STATE, COMMAND_SEMANTIC_SNAPSHOT]
+        ):
+            raise RuntimeError(
+                f"semantic view remained available after document close: {closed_snapshot!r}"
+            )
+
+        check_typed_load_failure(graceful, 8, root / "does-not-exist.docx")
+        graceful.graceful_shutdown(9)
 
         profile_files = count_profile_files(graceful.profile)
         if profile_files == 0:
             raise RuntimeError("explicit LibreOffice profile remained empty after engine use")
         if (graceful.home / ".config" / "libreoffice").exists():
             raise RuntimeError("LibreOffice unexpectedly used HOME profile instead of explicit profile URL")
+
+        limited = NativeAdapter(executable, install, root / "semantic-limit")
+        limited.open_document(30, input_docx)
+        limit_prefix = "X" * 256
+        for request_id in range(31, 35):
+            limited.insert_prefix(request_id, limit_prefix)
+        check_semantic_limit(limited, 35)
+        check_engine_info(limited, 36)
+        limited.graceful_shutdown(37)
 
         crashed = NativeAdapter(executable, install, root / "crashed")
         crash_width, crash_height = crashed.open_document(10, input_docx)
@@ -199,7 +276,10 @@ def main() -> int:
 
         restarted = NativeAdapter(executable, install, root / "restarted")
         restart_width, restart_height = restarted.open_document(11, input_docx)
-        restarted.graceful_shutdown(12)
+        restart_snapshot = restarted.semantic_snapshot(12)
+        if restart_snapshot != EXPECTED_PARAGRAPHS:
+            raise RuntimeError(f"restarted semantic snapshot mismatch: {restart_snapshot!r}")
+        restarted.graceful_shutdown(13)
 
         invalid = NativeAdapter(executable, install, root / "invalid-command")
         invalid_payload = invalid.request(20, bytes([99]))
@@ -215,6 +295,12 @@ def main() -> int:
         print(f"native_adapter_crash_open_twips={crash_width}x{crash_height}")
         print(f"native_adapter_restart_open_twips={restart_width}x{restart_height}")
         print(f"native_adapter_profile_files={profile_files}")
+        print(f"native_adapter_semantic_paragraphs={len(before)}")
+        print("native_adapter_live_semantic_snapshot=ok")
+        print("native_adapter_unsaved_lok_edit_visible_in_snapshot=ok")
+        print("native_adapter_semantic_view_closed_with_document=ok")
+        print("native_adapter_oversized_live_semantic_snapshot_rejected=ok")
+        print("native_adapter_restart_semantic_snapshot=ok")
         print("native_adapter_typed_load_failure=ok")
         print("native_adapter_invalid_command=ok")
         print("native_adapter_graceful_exit=ok")
