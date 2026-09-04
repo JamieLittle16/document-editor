@@ -15,6 +15,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.85.0
         with:
           components: rustfmt,clippy
+      - name: Architecture
+        run: python3 tools/architecture_guard.py
       - name: Format
         run: cargo fmt --all --check
       - name: Check
@@ -23,3 +25,102 @@ jobs:
         run: cargo test --workspace --all-targets
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  libreofficekit-probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LibreOfficeKit qualification dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            g++ \
+            libreoffice-dev \
+            libreofficekit-dev \
+            libreoffice-core-nogui \
+            libreoffice-writer-nogui
+      - name: Generate deterministic DOCX fixture
+        run: |
+          python3 spikes/libreofficekit-probe/make_fixture.py /tmp/document-editor-lok-input.docx
+          mkdir -p /tmp/document-editor-lok-profile
+      - name: Build LibreOfficeKit boundary probe
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
+            spikes/libreofficekit-probe/probe.cxx \
+            -ldl \
+            -o /tmp/document-editor-lok-probe
+      - name: Run LibreOfficeKit boundary probe
+        run: |
+          /tmp/document-editor-lok-probe \
+            /usr/lib/libreoffice/program \
+            file:///tmp/document-editor-lok-profile \
+            /tmp/document-editor-lok-input.docx \
+            /tmp/document-editor-lok-roundtrip.docx
+      - name: Validate round-trip package and persisted edit
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from xml.etree import ElementTree
+          from zipfile import ZipFile
+
+          path = Path('/tmp/document-editor-lok-roundtrip.docx')
+          marker = 'R0A_EDIT_MARKER_7F3D'
+          if not path.is_file() or path.stat().st_size == 0:
+              raise SystemExit('round-trip DOCX is missing or empty')
+          with ZipFile(path) as archive:
+              bad = archive.testzip()
+              if bad is not None:
+                  raise SystemExit(f'corrupt round-trip member: {bad}')
+              if 'word/document.xml' not in archive.namelist():
+                  raise SystemExit('round-trip DOCX has no word/document.xml')
+              root = ElementTree.fromstring(archive.read('word/document.xml'))
+              text = ''.join(
+                  node.text or ''
+                  for node in root.iter(
+                      '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t'
+                  )
+              )
+              if marker not in text:
+                  raise SystemExit('LibreOfficeKit edit marker did not persist into DOCX text')
+          print(f'roundtrip_bytes={path.stat().st_size}')
+          print('persisted_edit=ok')
+          PY
+      - name: Measure semantic paragraph identity across edit and round-trip
+        run: |
+          python3 spikes/libreofficekit-probe/semantic_identity.py \
+            /tmp/document-editor-lok-input.docx \
+            /tmp/document-editor-lok-roundtrip.docx
+      - name: Generate pinned UNO SDK headers for native semantic qualification
+        run: |
+          rm -rf /tmp/document-editor-uno-generated
+          mkdir -p /tmp/document-editor-uno-generated
+          /usr/lib/libreoffice/sdk/bin/cppumaker \
+            -Gc \
+            -O/tmp/document-editor-uno-generated \
+            /usr/lib/libreoffice/program/types.rdb \
+            /usr/lib/libreoffice/program/types/offapi.rdb
+      - name: Build LibreOfficeKit native process adapter
+        run: |
+          g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
+            -I/usr/include/libreoffice \
+            -I/usr/include/x86_64-linux-gnu/libreoffice \
+            -I/tmp/document-editor-uno-generated \
+            spikes/libreofficekit-process-adapter/adapter.cxx \
+            spikes/libreofficekit-process-adapter/writer_semantics_24_2.cxx \
+            -L/usr/lib/libreoffice/program \
+            -L/usr/lib/libreoffice/sdk/lib \
+            -Wl,-rpath,/usr/lib/libreoffice/program \
+            -Wl,-rpath,/usr/lib/libreoffice/sdk/lib \
+            -lcomphelper \
+            -luno_cppuhelpergcc3 \
+            -luno_cppu \
+            -luno_salhelpergcc3 \
+            -luno_sal \
+            -ldl \
+            -o /tmp/document-editor-lok-process-adapter
+      - name: Qualify real-engine lifecycle and same-instance semantics
+        run: |
+          python3 spikes/libreofficekit-process-adapter/process_harness.py \
+            /tmp/document-editor-lok-process-adapter \
+            /usr/lib/libreoffice/program \
+            /tmp/document-editor-lok-input.docx

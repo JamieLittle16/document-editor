@@ -44,6 +44,25 @@ Measure copy/IPC cost and only then choose shared-memory optimisation.
 
 **Outcome:** extract paragraphs/text/style/language subset with revision tagging. Investigate object/anchor identity stability under edits.
 
+Current evidence:
+- saved-file paragraph semantics are qualified across edit/save/reopen;
+- DOCX `w14:paraId` / `w14:textId` are rejected as authoritative identity;
+- public LOK accessibility/selection APIs are rejected as whole-document semantic enumeration;
+- same-instance access to the exact live LOK-owned Writer `XTextDocument` is qualified on pinned LibreOffice 24.2.7.2;
+- the same retained semantic view observes an unsaved mutation made through the LOK document authority;
+- a versioned native-neutral ordered-paragraph snapshot now crosses the actual isolated engine process boundary inside the existing 1024-byte `DETR` payload bound;
+- semantic access is tied to document lifetime and is removed on close;
+- a fresh process can restart, reopen the fixture and reacquire the original semantic snapshot after forced death;
+- the internal 24.2 process-context ABI is isolated in a version-labelled native translation unit rather than exposed through product code;
+- the redundant standalone UNO bridge probe has been removed after consolidation into the process adapter.
+
+Remaining acceptance:
+- attach explicit document/revision freshness context to live semantic observations;
+- exercise insertion/deletion/split/merge/move/formatting edit sequences;
+- record candidate identity/reconciliation behaviour without freezing a product `ParagraphId` prematurely;
+- determine the smallest structural metadata needed for those identity experiments rather than mirroring UNO;
+- requalify identity/reconciliation across save/reload separately from live-instance behaviour.
+
 ## R0A.8 Worker failure recovery
 
 **Outcome:** forcibly kill worker during a session; shell harness remains alive and can restart/reopen checkpoint.

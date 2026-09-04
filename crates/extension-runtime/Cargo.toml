@@ -1,0 +1,12 @@
+[package]
+name = "extension-runtime"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+extension-api = { path = "../extension-api" }
+
+[lints]
+workspace = true
