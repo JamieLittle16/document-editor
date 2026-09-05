@@ -4,6 +4,10 @@
 #include <com/sun/star/container/XEnumerationAccess.hpp>
 #include <com/sun/star/frame/Desktop.hpp>
 #include <com/sun/star/lang/XComponent.hpp>
+#include <com/sun/star/text/ControlCharacter.hpp>
+#include <com/sun/star/text/XParagraphCursor.hpp>
+#include <com/sun/star/text/XText.hpp>
+#include <com/sun/star/text/XTextCursor.hpp>
 #include <com/sun/star/text/XTextDocument.hpp>
 #include <com/sun/star/text/XTextRange.hpp>
 #include <com/sun/star/uno/Exception.hpp>
@@ -17,9 +21,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
-#include <new>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace css = com::sun::star;
 
@@ -36,9 +42,23 @@ css::uno::Reference<css::uno::XComponentContext> getProcessComponentContext();
 
 namespace
 {
+struct KnownParagraphObject
+{
+    css::uno::Reference<css::uno::XInterface> object;
+    std::uint64_t probeToken = 0;
+};
+
+struct ObservedParagraph
+{
+    css::uno::Reference<css::uno::XInterface> object;
+    std::string text;
+};
+
 struct WriterSemanticView
 {
     css::uno::Reference<css::text::XTextDocument> document;
+    std::vector<KnownParagraphObject> knownParagraphObjects;
+    std::uint64_t nextProbeToken = 1;
 };
 
 std::string utf8(const rtl::OUString& value)
@@ -62,6 +82,12 @@ void writeU16(unsigned char* output, std::uint16_t value) noexcept
 {
     output[0] = static_cast<unsigned char>(value & 0xffU);
     output[1] = static_cast<unsigned char>((value >> 8U) & 0xffU);
+}
+
+void writeU64(unsigned char* output, std::uint64_t value) noexcept
+{
+    for (unsigned int index = 0; index < 8; ++index)
+        output[index] = static_cast<unsigned char>((value >> (8U * index)) & 0xffU);
 }
 
 std::unique_ptr<WriterSemanticView> acquireView(std::string& error)
@@ -111,6 +137,46 @@ std::unique_ptr<WriterSemanticView> acquireView(std::string& error)
     return view;
 }
 
+std::vector<ObservedParagraph> observeParagraphs(WriterSemanticView& view)
+{
+    std::vector<ObservedParagraph> paragraphs;
+    css::uno::Reference<css::container::XEnumerationAccess> access(
+        view.document->getText(), css::uno::UNO_QUERY_THROW);
+    auto enumeration = access->createEnumeration();
+    while (enumeration->hasMoreElements())
+    {
+        css::uno::Any element = enumeration->nextElement();
+        css::uno::Reference<css::uno::XInterface> interface;
+        if (!(element >>= interface) || !interface.is())
+            continue;
+
+        css::uno::Reference<css::text::XTextRange> range(interface, css::uno::UNO_QUERY);
+        if (!range.is())
+            continue;
+
+        paragraphs.push_back({interface, utf8(range->getString())});
+    }
+    return paragraphs;
+}
+
+std::uint64_t probeTokenFor(
+    WriterSemanticView& view,
+    const css::uno::Reference<css::uno::XInterface>& object)
+{
+    for (const KnownParagraphObject& known : view.knownParagraphObjects)
+    {
+        if (known.object == object)
+            return known.probeToken;
+    }
+
+    if (view.nextProbeToken == 0)
+        throw std::runtime_error("Writer paragraph probe token space exhausted");
+
+    const std::uint64_t token = view.nextProbeToken++;
+    view.knownParagraphObjects.push_back({object, token});
+    return token;
+}
+
 int encodeParagraphs(
     WriterSemanticView& view,
     std::size_t maxParagraphs,
@@ -127,25 +193,18 @@ int encodeParagraphs(
         return r0a::kWriterSemanticStatusLimitExceeded;
     }
 
-    std::size_t offset = kLengthBytes;
-    std::size_t paragraphCount = 0;
-    css::uno::Reference<css::container::XEnumerationAccess> access(
-        view.document->getText(), css::uno::UNO_QUERY_THROW);
-    auto enumeration = access->createEnumeration();
-    while (enumeration->hasMoreElements())
+    const auto paragraphs = observeParagraphs(view);
+    if (paragraphs.size() > maxParagraphs || paragraphs.size() > 0xffffU)
     {
-        css::uno::Any element = enumeration->nextElement();
-        css::uno::Reference<css::uno::XInterface> interface;
-        if (!(element >>= interface) || !interface.is())
-            continue;
+        error = "Writer paragraph snapshot exceeds R0A paragraph-count bound";
+        return r0a::kWriterSemanticStatusLimitExceeded;
+    }
 
-        css::uno::Reference<css::text::XTextRange> range(interface, css::uno::UNO_QUERY);
-        if (!range.is())
-            continue;
-
-        const std::string paragraph = utf8(range->getString());
-        if (paragraphCount >= maxParagraphs || paragraphCount >= 0xffffU
-            || paragraph.size() > 0xffffU || offset > outputCapacity - kLengthBytes
+    std::size_t offset = kLengthBytes;
+    for (const ObservedParagraph& observed : paragraphs)
+    {
+        const std::string& paragraph = observed.text;
+        if (paragraph.size() > 0xffffU || offset > outputCapacity - kLengthBytes
             || paragraph.size() > outputCapacity - kLengthBytes - offset)
         {
             error = "Writer paragraph snapshot exceeds R0A semantic accumulation bound";
@@ -157,12 +216,170 @@ int encodeParagraphs(
         if (!paragraph.empty())
             std::memcpy(output + offset, paragraph.data(), paragraph.size());
         offset += paragraph.size();
-        ++paragraphCount;
     }
 
-    writeU16(output, static_cast<std::uint16_t>(paragraphCount));
+    writeU16(output, static_cast<std::uint16_t>(paragraphs.size()));
     outputBytes = offset;
     return r0a::kWriterSemanticStatusOk;
+}
+
+int encodeIdentityParagraphs(
+    WriterSemanticView& view,
+    std::size_t maxParagraphs,
+    unsigned char* output,
+    std::size_t outputCapacity,
+    std::size_t& outputBytes,
+    std::string& error)
+{
+    constexpr std::size_t kCountBytes = 2;
+    constexpr std::size_t kTokenBytes = 8;
+    constexpr std::size_t kLengthBytes = 2;
+    constexpr std::size_t kEntryFixedBytes = kTokenBytes + kLengthBytes;
+
+    outputBytes = 0;
+    if (output == nullptr || outputCapacity < kCountBytes)
+    {
+        error = "identity-probe output buffer is too small for paragraph count";
+        return r0a::kWriterSemanticStatusLimitExceeded;
+    }
+
+    const auto paragraphs = observeParagraphs(view);
+    if (paragraphs.size() > maxParagraphs || paragraphs.size() > 0xffffU)
+    {
+        error = "Writer identity probe exceeds R0A paragraph-count bound";
+        return r0a::kWriterSemanticStatusLimitExceeded;
+    }
+
+    std::size_t offset = kCountBytes;
+    for (const ObservedParagraph& observed : paragraphs)
+    {
+        if (observed.text.size() > 0xffffU || offset > outputCapacity
+            || kEntryFixedBytes > outputCapacity - offset
+            || observed.text.size() > outputCapacity - offset - kEntryFixedBytes)
+        {
+            error = "Writer identity probe exceeds R0A semantic accumulation bound";
+            return r0a::kWriterSemanticStatusLimitExceeded;
+        }
+
+        const std::uint64_t token = probeTokenFor(view, observed.object);
+        writeU64(output + offset, token);
+        offset += kTokenBytes;
+        writeU16(output + offset, static_cast<std::uint16_t>(observed.text.size()));
+        offset += kLengthBytes;
+        if (!observed.text.empty())
+            std::memcpy(output + offset, observed.text.data(), observed.text.size());
+        offset += observed.text.size();
+    }
+
+    writeU16(output, static_cast<std::uint16_t>(paragraphs.size()));
+    outputBytes = offset;
+    return r0a::kWriterSemanticStatusOk;
+}
+
+int splitFirstParagraph(
+    WriterSemanticView& view,
+    std::uint16_t characterOffset,
+    std::string& error)
+{
+    if (characterOffset > static_cast<std::uint16_t>(std::numeric_limits<sal_Int16>::max()))
+    {
+        error = "split offset exceeds UNO text-cursor movement bound";
+        return r0a::kWriterSemanticStatusError;
+    }
+
+    auto text = view.document->getText();
+    auto cursor = text->createTextCursor();
+    cursor->gotoStart(false);
+    if (characterOffset != 0
+        && !cursor->goRight(static_cast<sal_Int16>(characterOffset), false))
+    {
+        error = "split offset is outside the first Writer paragraph";
+        return r0a::kWriterSemanticStatusError;
+    }
+
+    css::uno::Reference<css::text::XParagraphCursor> paragraphCursor(
+        cursor, css::uno::UNO_QUERY_THROW);
+    if (characterOffset != 0 && !paragraphCursor->isEndOfParagraph())
+    {
+        // The caller deliberately chooses an interior offset for this R0A
+        // experiment. Crossing the first paragraph would make the observation
+        // ambiguous rather than merely invalid.
+        css::uno::Reference<css::text::XTextCursor> startCursor = text->createTextCursor();
+        startCursor->gotoStart(false);
+        css::uno::Reference<css::text::XParagraphCursor> firstParagraph(
+            startCursor, css::uno::UNO_QUERY_THROW);
+        if (!firstParagraph->gotoEndOfParagraph(true))
+        {
+            error = "could not determine first Writer paragraph extent";
+            return r0a::kWriterSemanticStatusError;
+        }
+        const sal_Int32 firstParagraphLength = firstParagraph->getString().getLength();
+        if (static_cast<sal_Int32>(characterOffset) >= firstParagraphLength)
+        {
+            error = "split offset must be strictly inside the first Writer paragraph";
+            return r0a::kWriterSemanticStatusError;
+        }
+    }
+
+    text->insertControlCharacter(
+        cursor,
+        css::text::ControlCharacter::PARAGRAPH_BREAK,
+        false);
+    return r0a::kWriterSemanticStatusOk;
+}
+
+int mergeFirstTwoParagraphs(WriterSemanticView& view, std::string& error)
+{
+    auto text = view.document->getText();
+    css::uno::Reference<css::text::XParagraphCursor> cursor(
+        text->createTextCursor(), css::uno::UNO_QUERY_THROW);
+    cursor->gotoStart(false);
+    if (!cursor->gotoEndOfParagraph(false))
+    {
+        error = "could not reach end of first Writer paragraph";
+        return r0a::kWriterSemanticStatusError;
+    }
+    if (!cursor->goRight(1, true))
+    {
+        error = "Writer document has no second paragraph to merge";
+        return r0a::kWriterSemanticStatusError;
+    }
+
+    cursor->setString(rtl::OUString());
+    return r0a::kWriterSemanticStatusOk;
+}
+
+template <typename Operation>
+int runModuleOperation(
+    const char* operationName,
+    char* error,
+    std::size_t errorCapacity,
+    Operation&& operation)
+{
+    writeError(error, errorCapacity, "");
+    try
+    {
+        std::string message;
+        const int status = operation(message);
+        if (status != r0a::kWriterSemanticStatusOk)
+            writeError(error, errorCapacity, message);
+        return status;
+    }
+    catch (const css::uno::Exception& exception)
+    {
+        writeError(error, errorCapacity, std::string(operationName) + ": " + utf8(exception.Message));
+        return r0a::kWriterSemanticStatusError;
+    }
+    catch (const std::exception& exception)
+    {
+        writeError(error, errorCapacity, std::string(operationName) + ": " + exception.what());
+        return r0a::kWriterSemanticStatusError;
+    }
+    catch (...)
+    {
+        writeError(error, errorCapacity, std::string(operationName) + ": unknown native exception");
+        return r0a::kWriterSemanticStatusError;
+    }
 }
 } // namespace
 
@@ -187,18 +404,12 @@ extern "C" void* r0a_writer_semantics_acquire(char* error, std::size_t errorCapa
     }
     catch (const css::uno::Exception& exception)
     {
-        writeError(
-            error,
-            errorCapacity,
-            "acquire Writer semantic view: " + utf8(exception.Message));
+        writeError(error, errorCapacity, "acquire Writer semantic view: " + utf8(exception.Message));
         return nullptr;
     }
     catch (const std::exception& exception)
     {
-        writeError(
-            error,
-            errorCapacity,
-            std::string("acquire Writer semantic view: ") + exception.what());
+        writeError(error, errorCapacity, std::string("acquire Writer semantic view: ") + exception.what());
         return nullptr;
     }
     catch (...)
@@ -224,52 +435,105 @@ extern "C" int r0a_writer_semantics_encode_paragraphs(
 {
     if (outputBytes != nullptr)
         *outputBytes = 0;
-    writeError(error, errorCapacity, "");
     if (view == nullptr || outputBytes == nullptr)
     {
         writeError(error, errorCapacity, "invalid Writer semantic module arguments");
         return r0a::kWriterSemanticStatusError;
     }
 
-    try
-    {
-        std::string message;
-        std::size_t encodedBytes = 0;
-        const int status = encodeParagraphs(
-            *static_cast<WriterSemanticView*>(view),
-            maxParagraphs,
-            output,
-            outputCapacity,
-            encodedBytes,
-            message);
-        if (status != r0a::kWriterSemanticStatusOk)
-        {
-            writeError(error, errorCapacity, message);
+    return runModuleOperation(
+        "enumerate Writer paragraphs",
+        error,
+        errorCapacity,
+        [&](std::string& message) {
+            std::size_t encodedBytes = 0;
+            const int status = encodeParagraphs(
+                *static_cast<WriterSemanticView*>(view),
+                maxParagraphs,
+                output,
+                outputCapacity,
+                encodedBytes,
+                message);
+            if (status == r0a::kWriterSemanticStatusOk)
+                *outputBytes = encodedBytes;
             return status;
-        }
+        });
+}
 
-        *outputBytes = encodedBytes;
-        return r0a::kWriterSemanticStatusOk;
-    }
-    catch (const css::uno::Exception& exception)
+extern "C" int r0a_writer_semantics_encode_identity_paragraphs(
+    void* view,
+    std::size_t maxParagraphs,
+    unsigned char* output,
+    std::size_t outputCapacity,
+    std::size_t* outputBytes,
+    char* error,
+    std::size_t errorCapacity)
+{
+    if (outputBytes != nullptr)
+        *outputBytes = 0;
+    if (view == nullptr || outputBytes == nullptr)
     {
-        writeError(
-            error,
-            errorCapacity,
-            "enumerate Writer paragraphs: " + utf8(exception.Message));
+        writeError(error, errorCapacity, "invalid Writer identity-probe module arguments");
         return r0a::kWriterSemanticStatusError;
     }
-    catch (const std::exception& exception)
+
+    return runModuleOperation(
+        "enumerate Writer identity-probe paragraphs",
+        error,
+        errorCapacity,
+        [&](std::string& message) {
+            std::size_t encodedBytes = 0;
+            const int status = encodeIdentityParagraphs(
+                *static_cast<WriterSemanticView*>(view),
+                maxParagraphs,
+                output,
+                outputCapacity,
+                encodedBytes,
+                message);
+            if (status == r0a::kWriterSemanticStatusOk)
+                *outputBytes = encodedBytes;
+            return status;
+        });
+}
+
+extern "C" int r0a_writer_semantics_split_first_paragraph(
+    void* view,
+    std::uint16_t characterOffset,
+    char* error,
+    std::size_t errorCapacity)
+{
+    if (view == nullptr)
     {
-        writeError(
-            error,
-            errorCapacity,
-            std::string("enumerate Writer paragraphs: ") + exception.what());
+        writeError(error, errorCapacity, "invalid Writer split-probe module arguments");
         return r0a::kWriterSemanticStatusError;
     }
-    catch (...)
+
+    return runModuleOperation(
+        "split first Writer paragraph",
+        error,
+        errorCapacity,
+        [&](std::string& message) {
+            return splitFirstParagraph(
+                *static_cast<WriterSemanticView*>(view), characterOffset, message);
+        });
+}
+
+extern "C" int r0a_writer_semantics_merge_first_two_paragraphs(
+    void* view,
+    char* error,
+    std::size_t errorCapacity)
+{
+    if (view == nullptr)
     {
-        writeError(error, errorCapacity, "enumerate Writer paragraphs: unknown native exception");
+        writeError(error, errorCapacity, "invalid Writer merge-probe module arguments");
         return r0a::kWriterSemanticStatusError;
     }
+
+    return runModuleOperation(
+        "merge first two Writer paragraphs",
+        error,
+        errorCapacity,
+        [&](std::string& message) {
+            return mergeFirstTwoParagraphs(*static_cast<WriterSemanticView*>(view), message);
+        });
 }
