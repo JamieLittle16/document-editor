@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -37,8 +38,8 @@ constexpr unsigned char kCommandShutdown = 4;
 constexpr unsigned char kCommandSemanticSnapshot = 5;
 constexpr unsigned char kCommandInsertPrefix = 6;
 
-constexpr unsigned char kSemanticProjectionVersion = 1;
-constexpr std::size_t kSemanticResponseFixedBytes = 5;
+constexpr unsigned char kSemanticProjectionVersion = 2;
+constexpr std::size_t kSemanticResponseFixedBytes = 13;
 constexpr std::size_t kSemanticParagraphLengthBytes = 2;
 static_assert(kMaxPayloadBytes > kSemanticResponseFixedBytes);
 constexpr std::size_t kMaxSemanticEncodedParagraphBytes =
@@ -252,6 +253,7 @@ std::vector<unsigned char> openDocument(
     lok::Office& office,
     std::unique_ptr<lok::Document>& document,
     std::unique_ptr<r0a::WriterSemanticView>& semanticView,
+    std::uint64_t& documentRevision,
     const std::vector<unsigned char>& request)
 {
     if (document)
@@ -283,6 +285,7 @@ std::vector<unsigned char> openDocument(
 
     document = std::move(candidate);
     semanticView = std::move(candidateSemanticView);
+    documentRevision = 0;
 
     std::vector<unsigned char> response{kStatusOk, kCommandOpen, 1};
     appendU64(response, static_cast<std::uint64_t>(width));
@@ -290,7 +293,9 @@ std::vector<unsigned char> openDocument(
     return response;
 }
 
-std::vector<unsigned char> semanticSnapshot(const r0a::WriterSemanticView* semanticView)
+std::vector<unsigned char> semanticSnapshot(
+    const r0a::WriterSemanticView* semanticView,
+    std::uint64_t documentRevision)
 {
     if (semanticView == nullptr)
         return errorPayload(kStatusEngineState, kCommandSemanticSnapshot, "no Writer document is open");
@@ -317,6 +322,7 @@ std::vector<unsigned char> semanticSnapshot(const r0a::WriterSemanticView* seman
         kCommandSemanticSnapshot,
         kSemanticProjectionVersion,
     };
+    appendU64(response, documentRevision);
     appendU16(response, static_cast<std::uint16_t>(paragraphs.size()));
 
     for (const std::string& paragraph : paragraphs)
@@ -339,12 +345,15 @@ std::vector<unsigned char> semanticSnapshot(const r0a::WriterSemanticView* seman
 
 std::vector<unsigned char> insertPrefix(
     lok::Document* document,
+    std::uint64_t& documentRevision,
     const std::vector<unsigned char>& request)
 {
     if (document == nullptr)
         return errorPayload(kStatusEngineState, kCommandInsertPrefix, "no Writer document is open");
     if (request.size() <= 1 || request.size() - 1 > kMaxPrefixBytes || containsNul(request, 1))
         return errorPayload(kStatusInvalidRequest, kCommandInsertPrefix, "invalid prefix text");
+    if (documentRevision == std::numeric_limits<std::uint64_t>::max())
+        return errorPayload(kStatusEngineState, kCommandInsertPrefix, "document revision exhausted");
 
     document->postUnoCommand(".uno:GoToStartOfDoc", nullptr, false);
     if (!document->paste(
@@ -354,6 +363,7 @@ std::vector<unsigned char> insertPrefix(
     {
         return errorPayload(kStatusEngineState, kCommandInsertPrefix, "LibreOfficeKit prefix edit failed");
     }
+    ++documentRevision;
     return {kStatusOk, kCommandInsertPrefix};
 }
 } // namespace
@@ -377,6 +387,7 @@ int main(int argc, char* argv[])
 
         std::unique_ptr<lok::Document> document;
         std::unique_ptr<r0a::WriterSemanticView> semanticView;
+        std::uint64_t documentRevision = 0;
         for (;;)
         {
             Frame frame;
@@ -407,7 +418,12 @@ int main(int argc, char* argv[])
                         response = engineInfo(*office);
                     break;
                 case kCommandOpen:
-                    response = openDocument(*office, document, semanticView, frame.payload);
+                    response = openDocument(
+                        *office,
+                        document,
+                        semanticView,
+                        documentRevision,
+                        frame.payload);
                     break;
                 case kCommandClose:
                     if (frame.payload.size() != 1)
@@ -416,6 +432,7 @@ int main(int argc, char* argv[])
                     {
                         semanticView.reset();
                         document.reset();
+                        documentRevision = 0;
                         response = {kStatusOk, kCommandClose};
                     }
                     break;
@@ -426,6 +443,7 @@ int main(int argc, char* argv[])
                     {
                         semanticView.reset();
                         document.reset();
+                        documentRevision = 0;
                         response = {kStatusOk, kCommandShutdown};
                         shutdown = true;
                     }
@@ -434,10 +452,10 @@ int main(int argc, char* argv[])
                     if (frame.payload.size() != 1)
                         response = errorPayload(kStatusInvalidRequest, command, "invalid semantic-snapshot request");
                     else
-                        response = semanticSnapshot(semanticView.get());
+                        response = semanticSnapshot(semanticView.get(), documentRevision);
                     break;
                 case kCommandInsertPrefix:
-                    response = insertPrefix(document.get(), frame.payload);
+                    response = insertPrefix(document.get(), documentRevision, frame.payload);
                     break;
                 default:
                     response = errorPayload(kStatusInvalidRequest, command, "unknown R0A command");
