@@ -59,6 +59,7 @@ public:
 
     bool splitFirstParagraph(std::uint16_t characterOffset, std::string& error);
     bool mergeFirstTwoParagraphs(std::string& error);
+    bool centerFirstParagraph(std::string& error);
 
 private:
     struct Impl;
