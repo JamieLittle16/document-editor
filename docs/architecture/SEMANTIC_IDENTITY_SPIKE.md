@@ -8,7 +8,7 @@ The application needs semantic identities that can support selection recovery, G
 
 R0A therefore measures candidate identity and reconciliation signals before any permanent anchor model is designed.
 
-The evidence now answers six questions:
+The evidence now answers seven questions:
 
 1. can DOCX paragraph metadata serve as durable product identity? **No.**
 2. can public LibreOfficeKit view/accessibility APIs provide deterministic whole-document live semantics? **Not in the qualified headless configuration.**
@@ -16,6 +16,7 @@ The evidence now answers six questions:
 4. can normalized revision-stamped live semantics cross the isolated engine process boundary without exposing UNO types? **Yes, for the bounded R0A paragraph projection.**
 5. does Writer paragraph UNO-object identity behave like durable logical identity under interior split/merge? **No. A semantic round trip can destroy the original object identity.**
 6. does simple paragraph-boundary insertion/deletion behave more stably? **No. Inserting then deleting an empty adjacent paragraph reproduces the same non-invertible object relation.**
+7. does a verified formatting-only paragraph mutation preserve live object identity? **Yes in the pinned environment. All three observed paragraph objects survive an alignment change while the semantic revision advances.**
 
 A production paragraph identity/reconciliation model is still deliberately unresolved.
 
@@ -191,7 +192,7 @@ Only native-neutral bytes cross `DETR`. No UNO reference, engine address or Writ
 
 This establishes where semantic information can flow and how freshness can be checked. It does not freeze the permanent semantic schema or identity model.
 
-## Qualified live structural identity observation
+## Qualified live identity observations
 
 Inside one live semantic view, a monotonically increasing probe token represents UNO same-object equality only. Tokens are view-local evidence and are never product identity.
 
@@ -241,15 +242,44 @@ pinned R0 -> R2: 0->-;1->1;2->2
 
 Even this semantically simple insertion/deletion round trip replaces the original `P0` object. Untouched later paragraph objects remain continuous.
 
+### Formatting-only alignment change
+
+The formatting control runs in a fresh process and deliberately changes no text or paragraph boundary.
+
+The pinned 24.2 compatibility module sets first-paragraph `ParaAdjust` to `CENTER` through `XPropertySet` and returns success only after the property reads back as `CENTER`. The process adapter then advances the qualification revision.
+
+Two independent CI executions reproduced:
+
+```text
+representative R0 before formatting: (1, 2, 3)
+representative R1 after formatting:  (1, 2, 3)
+
+pinned R0 -> R1: 0->0;1->1;2->2
+```
+
+Both the identity projection and ordinary semantic paragraph-text projection remain exactly `(P0, P1, P2)`, while the qualification revision advances `R0 -> R1`.
+
+This gives an intentionally asymmetric reconciliation signal:
+
+```text
+same live Writer object
+    => strong positive continuity evidence
+
+different/missing live Writer object
+    => not sufficient evidence of logical discontinuity
+```
+
+The second implication is prohibited by the structural evidence: split/merge and insertion/deletion can replace an engine object without replacing the logical paragraph.
+
 ### Conclusion: engine object identity
 
 **UNO object identity is useful local continuity evidence, but it is not durable logical identity.**
 
-The evidence is now stronger than a single split edge case. Both an interior split/merge and an empty paragraph insertion/deletion restore exact paragraph semantics while failing to restore the original first-paragraph engine object.
+The combined evidence now shows both sides clearly. A non-structural formatting mutation preserves all observed paragraph objects, while ordinary structural semantic round trips can replace an original object even when exact paragraph text is restored.
 
-Office history, comments, collaboration anchors and durable selections must therefore live above engine object identity. Engine identity may inform reconciliation, but cannot define it.
+Office history, comments, collaboration anchors and durable selections must therefore live above engine object identity. Engine identity may strengthen a reconciliation decision when equality survives, but loss of equality cannot define deletion or logical replacement.
 
-The exact qualification, CI contracts and architectural consequences are recorded in `STRUCTURAL_IDENTITY_QUALIFICATION.md`.
+The exact qualifications, CI contracts and architectural consequences are recorded in `STRUCTURAL_IDENTITY_QUALIFICATION.md`.
 
 ## What this spike proves
 
@@ -268,12 +298,13 @@ The exact qualification, CI contracts and architectural consequences are recorde
 - both tested structural round trips preserve some paragraph objects but are not logically invertible;
 - semantic equality after a structural round trip does not imply restoration of engine-object identity;
 - paragraph-boundary insertion/deletion can replace an original object even when the inserted paragraph is empty;
+- a verified formatting-only first-paragraph alignment mutation preserves all three paragraph objects in the pinned live Writer authority;
+- same-object equality is therefore strong positive continuity evidence within that authority, but object inequality remains non-decisive;
 - binary package size, probe-token numbers and rendered raster hashes remain observations rather than semantic goldens.
 
 ## What remains unresolved
 
 - identity through paragraph move/reorder;
-- formatting-only edit behaviour;
 - duplicate-text reconciliation where content matching is ambiguous;
 - identity/reconciliation through save/reload when external file metadata is absent or rewritten;
 - anchors inside a paragraph rather than only block identity;
@@ -288,17 +319,16 @@ The exact qualification, CI contracts and architectural consequences are recorde
 The next R0A identity work should extend the same evidence path rather than invent another acquisition or transport mechanism:
 
 1. move/reorder;
-2. formatting-only changes;
-3. duplicate-text fixtures;
-4. save/reload and worker-restart reconciliation;
-5. callback/invalidation ordering relative to semantic revisions.
+2. duplicate-text fixtures;
+3. save/reload and worker-restart reconciliation;
+4. callback/invalidation ordering relative to semantic revisions.
 
 The constraints remain strict:
 
 - retain the same-instance semantic authority and bounded process boundary;
 - measure engine behaviour before inventing adapter IDs;
 - distinguish stable engine evidence from product reconciliation policy;
-- do not define product `ParagraphId` or durable anchors until the structural sequence establishes the necessary invariants;
+- do not define product `ParagraphId` or durable anchors until the edit/reload sequence establishes the necessary invariants;
 - keep the internal 24.2 process-context dependency isolated until a production compatibility ADR is justified.
 
 If Writer exposes no durable identity suitable for the product, Office will need an explicit product-owned identity/reconciliation layer rather than leaking engine addresses, hashing paragraph text or falling back to text offsets.
@@ -312,6 +342,7 @@ This spike does not authorize:
 - exposing UNO or LibreOffice object references to Rust product code;
 - treating paragraph text hashes as identities;
 - treating UNO object/reference identity or view-local probe tokens as product semantic identity;
+- treating same-object survival under one formatting property as a guarantee across all formatting/Writer structures;
 - freezing the R0A paragraph snapshot encoding as the permanent wire schema;
 - requiring LibreOffice to reproduce today's OOXML serialization details;
 - launching a second office/document and treating its semantics as if they came from the live LOK authority;
