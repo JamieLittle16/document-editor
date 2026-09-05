@@ -23,6 +23,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -281,48 +282,42 @@ int splitFirstParagraph(
     std::uint16_t characterOffset,
     std::string& error)
 {
-    if (characterOffset > static_cast<std::uint16_t>(std::numeric_limits<sal_Int16>::max()))
+    if (characterOffset == 0
+        || characterOffset > static_cast<std::uint16_t>(std::numeric_limits<sal_Int16>::max()))
     {
-        error = "split offset exceeds UNO text-cursor movement bound";
+        error = "split offset must be strictly inside the first Writer paragraph";
         return r0a::kWriterSemanticStatusError;
     }
 
     auto text = view.document->getText();
-    auto cursor = text->createTextCursor();
-    cursor->gotoStart(false);
-    if (characterOffset != 0
-        && !cursor->goRight(static_cast<sal_Int16>(characterOffset), false))
+
+    css::uno::Reference<css::text::XParagraphCursor> firstParagraph(
+        text->createTextCursor(), css::uno::UNO_QUERY_THROW);
+    firstParagraph->gotoStart(false);
+    if (!firstParagraph->gotoEndOfParagraph(true))
     {
-        error = "split offset is outside the first Writer paragraph";
+        error = "could not determine first Writer paragraph extent";
+        return r0a::kWriterSemanticStatusError;
+    }
+    const sal_Int32 firstParagraphLength = firstParagraph->getString().getLength();
+    if (static_cast<sal_Int32>(characterOffset) >= firstParagraphLength)
+    {
+        error = "split offset must be strictly inside the first Writer paragraph";
         return r0a::kWriterSemanticStatusError;
     }
 
-    css::uno::Reference<css::text::XParagraphCursor> paragraphCursor(
-        cursor, css::uno::UNO_QUERY_THROW);
-    if (characterOffset != 0 && !paragraphCursor->isEndOfParagraph())
+    auto cursor = text->createTextCursor();
+    cursor->gotoStart(false);
+    if (!cursor->goRight(static_cast<sal_Int16>(characterOffset), false))
     {
-        // The caller deliberately chooses an interior offset for this R0A
-        // experiment. Crossing the first paragraph would make the observation
-        // ambiguous rather than merely invalid.
-        css::uno::Reference<css::text::XTextCursor> startCursor = text->createTextCursor();
-        startCursor->gotoStart(false);
-        css::uno::Reference<css::text::XParagraphCursor> firstParagraph(
-            startCursor, css::uno::UNO_QUERY_THROW);
-        if (!firstParagraph->gotoEndOfParagraph(true))
-        {
-            error = "could not determine first Writer paragraph extent";
-            return r0a::kWriterSemanticStatusError;
-        }
-        const sal_Int32 firstParagraphLength = firstParagraph->getString().getLength();
-        if (static_cast<sal_Int32>(characterOffset) >= firstParagraphLength)
-        {
-            error = "split offset must be strictly inside the first Writer paragraph";
-            return r0a::kWriterSemanticStatusError;
-        }
+        error = "could not position Writer cursor at split offset";
+        return r0a::kWriterSemanticStatusError;
     }
 
+    css::uno::Reference<css::text::XTextRange> splitRange(
+        cursor, css::uno::UNO_QUERY_THROW);
     text->insertControlCharacter(
-        cursor,
+        splitRange,
         css::text::ControlCharacter::PARAGRAPH_BREAK,
         false);
     return r0a::kWriterSemanticStatusOk;
@@ -345,7 +340,9 @@ int mergeFirstTwoParagraphs(WriterSemanticView& view, std::string& error)
         return r0a::kWriterSemanticStatusError;
     }
 
-    cursor->setString(rtl::OUString());
+    css::uno::Reference<css::text::XTextRange> mergeRange(
+        cursor, css::uno::UNO_QUERY_THROW);
+    mergeRange->setString(rtl::OUString());
     return r0a::kWriterSemanticStatusOk;
 }
 
