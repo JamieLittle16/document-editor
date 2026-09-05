@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -21,6 +22,21 @@ struct ParagraphSnapshot
     std::string error;
 };
 
+struct IdentityProbeParagraph
+{
+    // View-local qualification evidence only. This is deliberately not named an
+    // ID: it has no meaning after the WriterSemanticView is released.
+    std::uint64_t probeToken = 0;
+    std::string text;
+};
+
+struct IdentityProbeSnapshot
+{
+    SemanticReadStatus status = SemanticReadStatus::Ok;
+    std::vector<IdentityProbeParagraph> paragraphs;
+    std::string error;
+};
+
 class WriterSemanticView
 {
 public:
@@ -36,6 +52,13 @@ public:
     ParagraphSnapshot paragraphs(
         std::size_t maxParagraphs,
         std::size_t maxEncodedParagraphBytes) const;
+
+    IdentityProbeSnapshot identityProbeParagraphs(
+        std::size_t maxParagraphs,
+        std::size_t maxEncodedBytes);
+
+    bool splitFirstParagraph(std::uint16_t characterOffset, std::string& error);
+    bool mergeFirstTwoParagraphs(std::string& error);
 
 private:
     struct Impl;
