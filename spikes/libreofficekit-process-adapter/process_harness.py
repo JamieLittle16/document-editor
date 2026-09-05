@@ -30,14 +30,22 @@ COMMAND_CLOSE = 3
 COMMAND_SHUTDOWN = 4
 COMMAND_SEMANTIC_SNAPSHOT = 5
 COMMAND_INSERT_PREFIX = 6
+COMMAND_IDENTITY_PROBE_SNAPSHOT = 7
+COMMAND_SPLIT_FIRST_PARAGRAPH = 8
+COMMAND_MERGE_FIRST_TWO_PARAGRAPHS = 9
 
 SEMANTIC_PROJECTION_VERSION = 2
+IDENTITY_PROBE_PROJECTION_VERSION = 1
 EXPECTED_PARAGRAPHS = (
     "Document Editor LibreOfficeKit R0A probe",
     "This fixture is generated deterministically in CI.",
     "Stable semantic identity must be measured, not assumed.",
 )
 LIVE_PREFIX = "R0A_PROCESS_SEMANTIC_2D7E_"
+SPLIT_OFFSET = 8
+
+IdentityProbeParagraph = tuple[int, str]
+IdentityProbeSnapshot = tuple[IdentityProbeParagraph, ...]
 
 
 def read_exact(stream: BinaryIO, size: int, *, clean_eof: bool = False) -> bytes | None:
@@ -163,11 +171,57 @@ class NativeAdapter:
             raise RuntimeError("semantic snapshot contains trailing bytes")
         return revision, tuple(paragraphs)
 
+    def identity_probe_snapshot(
+        self, request_id: int
+    ) -> tuple[int, IdentityProbeSnapshot]:
+        payload = self.request(request_id, bytes([COMMAND_IDENTITY_PROBE_SNAPSHOT]))
+        if len(payload) < 13 or payload[0:3] != bytes(
+            [STATUS_OK, COMMAND_IDENTITY_PROBE_SNAPSHOT, IDENTITY_PROBE_PROJECTION_VERSION]
+        ):
+            raise RuntimeError(f"unexpected identity-probe response: {payload!r}")
+
+        revision = struct.unpack_from("<Q", payload, 3)[0]
+        paragraph_count = struct.unpack_from("<H", payload, 11)[0]
+        offset = 13
+        paragraphs: list[IdentityProbeParagraph] = []
+        for _ in range(paragraph_count):
+            if offset + 10 > len(payload):
+                raise RuntimeError("truncated identity-probe paragraph entry")
+            probe_token = struct.unpack_from("<Q", payload, offset)[0]
+            offset += 8
+            if probe_token == 0:
+                raise RuntimeError("identity-probe returned reserved zero token")
+            text_bytes = struct.unpack_from("<H", payload, offset)[0]
+            offset += 2
+            end = offset + text_bytes
+            if end > len(payload):
+                raise RuntimeError("truncated identity-probe paragraph text")
+            paragraphs.append((probe_token, payload[offset:end].decode("utf-8")))
+            offset = end
+        if offset != len(payload):
+            raise RuntimeError("identity-probe snapshot contains trailing bytes")
+        return revision, tuple(paragraphs)
+
     def insert_prefix(self, request_id: int, prefix: str) -> None:
         encoded = prefix.encode("utf-8")
         payload = self.request(request_id, bytes([COMMAND_INSERT_PREFIX]) + encoded)
         if payload != bytes([STATUS_OK, COMMAND_INSERT_PREFIX]):
             raise RuntimeError(f"unexpected prefix-edit response: {payload!r}")
+
+    def split_first_paragraph(self, request_id: int, character_offset: int) -> None:
+        if not 0 <= character_offset <= 0xFFFF:
+            raise ValueError("split offset does not fit R0A qualification request")
+        payload = self.request(
+            request_id,
+            bytes([COMMAND_SPLIT_FIRST_PARAGRAPH]) + struct.pack("<H", character_offset),
+        )
+        if payload != bytes([STATUS_OK, COMMAND_SPLIT_FIRST_PARAGRAPH]):
+            raise RuntimeError(f"unexpected split-probe response: {payload!r}")
+
+    def merge_first_two_paragraphs(self, request_id: int) -> None:
+        payload = self.request(request_id, bytes([COMMAND_MERGE_FIRST_TWO_PARAGRAPHS]))
+        if payload != bytes([STATUS_OK, COMMAND_MERGE_FIRST_TWO_PARAGRAPHS]):
+            raise RuntimeError(f"unexpected merge-probe response: {payload!r}")
 
     def graceful_shutdown(self, request_id: int) -> str:
         payload = self.request(request_id, bytes([COMMAND_SHUTDOWN]))
@@ -216,6 +270,38 @@ def check_semantic_limit(adapter: NativeAdapter, request_id: int) -> None:
 
 def count_profile_files(profile: Path) -> int:
     return sum(1 for path in profile.rglob("*") if path.is_file())
+
+
+def probe_texts(snapshot: IdentityProbeSnapshot) -> tuple[str, ...]:
+    return tuple(text for _, text in snapshot)
+
+
+def probe_tokens(snapshot: IdentityProbeSnapshot) -> tuple[int, ...]:
+    return tuple(token for token, _ in snapshot)
+
+
+def require_unique_probe_tokens(snapshot: IdentityProbeSnapshot, stage: str) -> None:
+    tokens = probe_tokens(snapshot)
+    if len(tokens) != len(set(tokens)):
+        raise RuntimeError(f"identity-probe tokens are not unique within {stage}: {tokens!r}")
+
+
+def identity_relation(
+    before: IdentityProbeSnapshot, after: IdentityProbeSnapshot
+) -> tuple[tuple[int, ...], ...]:
+    """Return after-index matches for each before paragraph using probe-token equality."""
+    after_tokens = probe_tokens(after)
+    return tuple(
+        tuple(index for index, candidate in enumerate(after_tokens) if candidate == token)
+        for token, _ in before
+    )
+
+
+def format_relation(relation: tuple[tuple[int, ...], ...]) -> str:
+    return ";".join(
+        f"{before_index}->" + (",".join(map(str, matches)) if matches else "-")
+        for before_index, matches in enumerate(relation)
+    )
 
 
 def main() -> int:
@@ -279,6 +365,57 @@ def main() -> int:
             raise RuntimeError("clean-EOF qualification did not establish a live semantic session")
         eof.clean_eof()
 
+        structural = NativeAdapter(executable, install, root / "structural-identity")
+        structural.open_document(50, input_docx)
+        identity_before_revision, identity_before = structural.identity_probe_snapshot(51)
+        identity_before_repeat_revision, identity_before_repeat = structural.identity_probe_snapshot(52)
+        if identity_before_revision != 0 or identity_before_repeat_revision != 0:
+            raise RuntimeError("identity probe changed revision without a mutation")
+        if identity_before != identity_before_repeat:
+            raise RuntimeError("identity probe is not repeatable without mutation")
+        if probe_texts(identity_before) != EXPECTED_PARAGRAPHS:
+            raise RuntimeError(f"identity probe baseline semantic mismatch: {identity_before!r}")
+        require_unique_probe_tokens(identity_before, "baseline")
+
+        structural.split_first_paragraph(53, SPLIT_OFFSET)
+        identity_split_revision, identity_split = structural.identity_probe_snapshot(54)
+        identity_split_repeat_revision, identity_split_repeat = structural.identity_probe_snapshot(55)
+        expected_split = (
+            EXPECTED_PARAGRAPHS[0][:SPLIT_OFFSET],
+            EXPECTED_PARAGRAPHS[0][SPLIT_OFFSET:],
+            EXPECTED_PARAGRAPHS[1],
+            EXPECTED_PARAGRAPHS[2],
+        )
+        if identity_split_revision != 1 or identity_split_repeat_revision != 1:
+            raise RuntimeError("split mutation did not advance revision exactly once")
+        if identity_split != identity_split_repeat:
+            raise RuntimeError("identity probe is not repeatable after split")
+        if probe_texts(identity_split) != expected_split:
+            raise RuntimeError(f"Writer split semantics mismatch: {identity_split!r}")
+        require_unique_probe_tokens(identity_split, "after split")
+        split_semantic_revision, split_semantic = structural.semantic_snapshot(56)
+        if split_semantic_revision != 1 or split_semantic != expected_split:
+            raise RuntimeError("normal semantic projection disagrees with split identity probe")
+
+        structural.merge_first_two_paragraphs(57)
+        identity_merge_revision, identity_merge = structural.identity_probe_snapshot(58)
+        identity_merge_repeat_revision, identity_merge_repeat = structural.identity_probe_snapshot(59)
+        if identity_merge_revision != 2 or identity_merge_repeat_revision != 2:
+            raise RuntimeError("merge mutation did not advance revision exactly once")
+        if identity_merge != identity_merge_repeat:
+            raise RuntimeError("identity probe is not repeatable after merge")
+        if probe_texts(identity_merge) != EXPECTED_PARAGRAPHS:
+            raise RuntimeError(f"Writer merge did not restore semantic paragraphs: {identity_merge!r}")
+        require_unique_probe_tokens(identity_merge, "after merge")
+        merge_semantic_revision, merge_semantic = structural.semantic_snapshot(60)
+        if merge_semantic_revision != 2 or merge_semantic != EXPECTED_PARAGRAPHS:
+            raise RuntimeError("normal semantic projection disagrees with merged identity probe")
+
+        relation_before_split = identity_relation(identity_before, identity_split)
+        relation_split_merge = identity_relation(identity_split, identity_merge)
+        relation_before_merge = identity_relation(identity_before, identity_merge)
+        structural.graceful_shutdown(61)
+
         limited = NativeAdapter(executable, install, root / "semantic-limit")
         limited.open_document(30, input_docx)
         limit_prefix = "X" * 256
@@ -328,6 +465,25 @@ def main() -> int:
         print(f"native_adapter_semantic_revision_before={before_revision}")
         print(f"native_adapter_semantic_revision_after={after_revision}")
         print(f"native_adapter_semantic_revision_restart={restart_revision}")
+        print(f"native_adapter_identity_tokens_before={probe_tokens(identity_before)}")
+        print(f"native_adapter_identity_tokens_split={probe_tokens(identity_split)}")
+        print(f"native_adapter_identity_tokens_merge={probe_tokens(identity_merge)}")
+        print(
+            "native_adapter_identity_relation_before_split="
+            + format_relation(relation_before_split)
+        )
+        print(
+            "native_adapter_identity_relation_split_merge="
+            + format_relation(relation_split_merge)
+        )
+        print(
+            "native_adapter_identity_relation_before_merge="
+            + format_relation(relation_before_merge)
+        )
+        print("native_adapter_identity_probe_repeatable=ok")
+        print("native_adapter_split_semantics=ok")
+        print("native_adapter_merge_semantics=ok")
+        print("native_adapter_structural_revision_progression=R0-R1-R2")
         print("native_adapter_live_semantic_snapshot=ok")
         print("native_adapter_semantic_revision_stamp=ok")
         print("native_adapter_unsaved_lok_edit_visible_in_snapshot=ok")
