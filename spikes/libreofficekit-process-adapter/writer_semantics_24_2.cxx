@@ -13,7 +13,10 @@
 #include <rtl/textenc.h>
 #include <rtl/ustring.hxx>
 
+#include <dlfcn.h>
+
 #include <cstddef>
+#include <cstring>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -22,20 +25,73 @@
 
 namespace css = com::sun::star;
 
-// Exact LibreOffice 24.2 processfactory.hxx signature.
-//
-// This is an internal LibreOffice ABI dependency used only by the pinned R0A
-// native qualification. Keep it in this version-labelled translation unit so
-// product-facing code and the native-neutral adapter surface cannot acquire the
-// dependency by accident. A production implementation requires a versioned
-// compatibility layer and ADR.
-namespace comphelper
-{
-css::uno::Reference<css::uno::XComponentContext> getProcessComponentContext();
-}
-
 namespace
 {
+// Exact LibreOffice 24.2 merged-library ABI dependency.
+//
+// Ubuntu's no-GUI LibreOffice package merges comphelper into libmergedlo.so, and
+// LibreOfficeKit owns that library's dynamic lifetime. Do not link libmergedlo
+// into the adapter executable: doing so keeps its process-global static state
+// alive beyond LOK teardown and changes destruction order. Instead, look up the
+// exported 24.2 comphelper entry point on the library instance LOK already owns.
+// This remains qualification-only machinery behind the version-labelled TU.
+using GetProcessComponentContext =
+    css::uno::Reference<css::uno::XComponentContext> (*)();
+
+class DynamicLibraryHandle
+{
+public:
+    explicit DynamicLibraryHandle(void* value)
+        : value_(value)
+    {
+    }
+
+    ~DynamicLibraryHandle()
+    {
+        if (value_ != nullptr)
+            dlclose(value_);
+    }
+
+    DynamicLibraryHandle(const DynamicLibraryHandle&) = delete;
+    DynamicLibraryHandle& operator=(const DynamicLibraryHandle&) = delete;
+
+    [[nodiscard]] void* get() const noexcept { return value_; }
+
+private:
+    void* value_;
+};
+
+css::uno::Reference<css::uno::XComponentContext> processComponentContext()
+{
+    dlerror();
+    DynamicLibraryHandle merged(
+        dlopen("libmergedlo.so", RTLD_LAZY | RTLD_LOCAL | RTLD_NOLOAD));
+    if (merged.get() == nullptr)
+    {
+        const char* error = dlerror();
+        throw std::runtime_error(
+            std::string("LibreOfficeKit merged runtime is not loaded: ")
+            + (error == nullptr ? "unknown dynamic-loader error" : error));
+    }
+
+    dlerror();
+    void* symbol = dlsym(
+        merged.get(),
+        "_ZN10comphelper26getProcessComponentContextEv");
+    if (symbol == nullptr)
+    {
+        const char* error = dlerror();
+        throw std::runtime_error(
+            std::string("LibreOffice 24.2 process-context symbol is unavailable: ")
+            + (error == nullptr ? "unknown dynamic-loader error" : error));
+    }
+
+    GetProcessComponentContext getContext = nullptr;
+    static_assert(sizeof(getContext) == sizeof(symbol));
+    std::memcpy(&getContext, &symbol, sizeof(getContext));
+    return getContext();
+}
+
 std::string utf8(const rtl::OUString& value)
 {
     const rtl::OString encoded = rtl::OUStringToOString(value, RTL_TEXTENCODING_UTF8);
@@ -69,7 +125,7 @@ std::unique_ptr<WriterSemanticView> WriterSemanticView::acquire(std::string& err
     error.clear();
     try
     {
-        const auto context = comphelper::getProcessComponentContext();
+        const auto context = processComponentContext();
         if (!context.is())
         {
             error = "LibreOffice process component context is null";
