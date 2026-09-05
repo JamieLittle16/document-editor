@@ -4,18 +4,19 @@ Status: qualification evidence, not a production document-model contract.
 
 ## Purpose
 
-The application needs semantic identities that can support selection recovery, history, comments, diagnostics and eventually collaboration without depending on transient byte offsets, render coordinates or engine object addresses.
+The application needs semantic identities that can support selection recovery, Git-like history, comments, diagnostics and eventually collaboration without depending on transient byte offsets, render coordinates or engine object addresses.
 
-R0A therefore tests candidate identity signals before any permanent anchor model is designed.
+R0A therefore measures candidate identity and reconciliation signals before any permanent anchor model is designed.
 
-The evidence now covers four questions:
+The evidence now answers five questions:
 
 1. can DOCX paragraph metadata serve as durable product identity? **No.**
 2. can public LibreOfficeKit view/accessibility APIs provide deterministic whole-document live semantics? **Not in the qualified headless configuration.**
 3. can a richer native semantic layer reach the exact Writer document already owned by LibreOfficeKit without creating a second authority? **Yes, in the pinned 24.2 environment.**
-4. can a normalized live semantic snapshot cross the isolated engine process boundary without exposing UNO types? **Yes, for the bounded R0A paragraph projection.**
+4. can normalized revision-stamped live semantics cross the isolated engine process boundary without exposing UNO types? **Yes, for the bounded R0A paragraph projection.**
+5. does Writer paragraph UNO-object identity behave like durable logical identity under split/merge? **No. It is useful local continuity evidence, but a semantic split/merge round trip can destroy the original object identity.**
 
-Stable paragraph/object identity is still deliberately unresolved.
+A production paragraph identity/reconciliation model is still deliberately unresolved.
 
 ## Fixture
 
@@ -51,7 +52,7 @@ LibreOffice 24.2.7.2
 BuildId 420(Build:2)
 ```
 
-After LibreOfficeKit loaded the DOCX, inserted the existing R0A text marker, saved a new DOCX and reopened it:
+After LibreOfficeKit loaded the DOCX, inserted the R0A text marker, saved a new DOCX and reopened it:
 
 ```text
 input paragraphs:             3
@@ -71,9 +72,9 @@ The semantic paragraph texts remained in the same order and the edit marker appe
 
 An identity mechanism that disappears during the qualified bootstrap engine's ordinary save path cannot be authoritative for product state.
 
-The exact stripping behaviour is *not* a permanent compatibility requirement. Future LibreOffice versions may preserve, regenerate or otherwise transform these fields. CI records the observation but does not require LibreOffice to keep stripping them forever.
+The exact stripping behaviour is not a permanent compatibility requirement. Future LibreOffice versions may preserve, regenerate or otherwise transform these fields. CI records the observation but does not require LibreOffice to keep stripping them forever.
 
-Likewise, content equality alone is not a sufficient identity system. Duplicate paragraphs, splits, merges, moves and edits make text matching ambiguous in real documents.
+Content equality alone is also insufficient. Duplicate paragraphs, splits, merges, moves and edits make text matching ambiguous in real documents.
 
 ## Rejected public LibreOfficeKit live-semantic routes
 
@@ -132,13 +133,13 @@ This is stronger than observing the same file twice. No separate UNO bootstrap i
 
 The bridge reaches the process context through LibreOffice's internal `comphelper::getProcessComponentContext()` symbol. The exact LibreOffice **24.2** signature returns the component-context reference by value and differs from newer LibreOffice source.
 
-The dependency is confined to:
+The dependency is confined to the unloadable compatibility module:
 
 ```text
 spikes/libreofficekit-process-adapter/writer_semantics_24_2.cxx
 ```
 
-The matching header exposes only an opaque C++ `WriterSemanticView` plus ordinary strings/vectors. UNO references and internal LibreOffice types do not cross that boundary.
+`writer_semantics_module_abi.hxx` exposes only a small native-neutral qualification ABI. UNO references and internal LibreOffice types do not cross into the adapter executable or Rust product crates.
 
 Therefore:
 
@@ -150,45 +151,95 @@ Therefore:
 
 ## Qualified bounded process-boundary snapshot
 
-The same-instance result is now integrated into the existing killable native process adapter rather than maintained as a second standalone bridge executable.
+The same-instance result is integrated into the killable native process adapter.
 
-The process adapter exposes a deliberately disposable R0A semantic command whose successful payload is:
+Semantic projection version 2 is deliberately disposable R0A qualification data:
 
 ```text
 status:u8
 command:u8
 projection_version:u8
+revision:u64-le
 paragraph_count:u16-le
 repeat paragraph_count times:
     byte_length:u16-le
     utf8_text[byte_length]
 ```
 
-Projection version 1 contains only ordered paragraph text. The complete response must fit the adapter's existing **1024-byte** control-frame payload bound. Oversized semantic results are rejected with a typed qualification-limit response rather than becoming an accidental unbounded transport path.
+The complete response must fit the adapter's existing **1024-byte** control-frame payload bound. Oversized semantic results are rejected with a typed qualification-limit response rather than becoming an accidental unbounded transport path.
 
 The host harness proves:
 
 ```text
 open fixture: OK
-bounded snapshot before edit: exact 3 fixture paragraphs
+bounded snapshot before edit: R0 + exact 3 fixture paragraphs
 unsaved LOK prefix edit: OK
-bounded snapshot after edit: prefix visible only in paragraph 1
+bounded snapshot after edit: R1 + prefix visible only in paragraph 1
 same retained native semantic view: preserved across the edit
 close document: semantic access removed
 force-kill with live Writer state: observed
 fresh process restart/reopen: OK
-fresh bounded snapshot after restart: original 3 fixture paragraphs
+fresh bounded snapshot after restart: fresh R0 + original 3 fixture paragraphs
 ```
 
 Only native-neutral bytes cross `DETR`. No UNO reference, engine address or Writer implementation object leaves the native process.
 
 ### Conclusion: snapshot boundary
 
-**The project now has a proven bounded live semantic observation seam across the isolated engine process boundary.**
+**The project has a proven bounded, revision-stamped live semantic observation seam across the isolated engine process boundary.**
 
-This establishes where semantic information can flow. It does not establish what the permanent semantic schema or identity model should be.
+This establishes where semantic information can flow and how freshness can be checked. It does not freeze the permanent semantic schema or identity model.
 
-The standalone discovery probe has been removed; same-instance acquisition and process-boundary semantic qualification now live in one native adapter path, reducing duplicate mechanisms.
+## Qualified live structural identity observation
+
+The next experiment retained the same semantic authority and added qualification-only paragraph-object probes plus two deterministic structural operations:
+
+- split the first paragraph at character offset `8`;
+- merge the resulting first two paragraphs by deleting their paragraph boundary.
+
+Inside one live semantic view, a monotonically increasing probe token represents UNO same-object equality only. Tokens are view-local evidence and are never product identity.
+
+Two independent CI executions reproduced the same relation.
+
+Representative token trace:
+
+```text
+R0 before split:       (1, 2, 3)
+R1 after split:        (4, 1, 2, 3)
+R2 after merge:        (4, 2, 3)
+```
+
+CI pins only the relation, not the numeric token values:
+
+```text
+R0 -> R1 split
+0 -> 1
+1 -> 2
+2 -> 3
+
+R1 -> R2 merge
+0 -> 0
+1 -> deleted
+2 -> 1
+3 -> 2
+
+R0 -> R2 semantic round trip
+0 -> deleted
+1 -> 1
+2 -> 2
+```
+
+The first paragraph's original Writer object survives the split as the **right fragment**. Writer creates a new object for the **left fragment**. Merging the two fragments then preserves the left/new object and destroys the right/original object.
+
+The final paragraph text is identical to the original paragraph text, but the original first-paragraph Writer object identity no longer exists.
+
+### Conclusion: engine object identity
+
+**UNO object identity is useful local continuity evidence, but it is not durable logical identity.**
+
+A structural semantic round trip is not identity-invertible at the bootstrap-engine object level. Office history, comments, collaboration anchors and durable selections must therefore live above engine object identity.
+
+The exact qualification, CI contract and architectural consequences are recorded in `STRUCTURAL_IDENTITY_QUALIFICATION.md`.
 
 ## What this spike proves
 
@@ -199,41 +250,49 @@ The standalone discovery probe has been removed; same-instance acquisition and p
 - focused accessibility state is not a proven whole-document enumerator in the headless LOK process;
 - `SelectAll` plus `getTextSelection()` is not a proven whole-document live-text extractor there;
 - the exact live Writer document loaded by LOK can be acquired through a native UNO semantic model in the pinned 24.2 environment;
-- the retained semantic view observes an unsaved mutation made through the LOK document authority;
+- the retained semantic view observes unsaved mutation made through the LOK document authority;
 - no second office/document is needed for the qualified semantic path;
-- ordered paragraph text can cross the actual isolated process boundary in a hard-bounded native-neutral response;
+- revision-stamped ordered paragraph text can cross the isolated process boundary in a hard-bounded native-neutral response;
 - semantic access is removed when the owning document closes and can be freshly reacquired after process restart;
-- binary package size and rendered raster hashes remain observations rather than semantic goldens.
+- paragraph UNO same-object equality is repeatable within an unchanged live view;
+- split/merge preserves some paragraph objects but is not logically invertible;
+- semantic equality after a structural round trip does not imply restoration of engine-object identity;
+- binary package size, probe-token numbers and rendered raster hashes remain observations rather than semantic goldens.
 
 ## What remains unresolved
 
-- stable paragraph/object identity while the document remains open;
-- identity through insertion, deletion, split, merge, move and formatting-only edits;
-- identity through save/reload when external file metadata is absent or rewritten;
+- identity through insertion/deletion adjacent to retained paragraphs;
+- identity through paragraph move/reorder;
+- formatting-only edit behaviour;
+- duplicate-text reconciliation where content matching is ambiguous;
+- identity/reconciliation through save/reload when external file metadata is absent or rewritten;
 - anchors inside a paragraph rather than only block identity;
-- explicit document/revision tagging for live semantic snapshots;
 - structural projection for tables, lists, fields, comments, tracked changes, images and other Writer structures;
 - callback/invalidation ordering and its relation to semantic revisions;
 - reconciliation after engine-process loss and restart;
-- the production, versioned native compatibility mechanism for same-instance UNO access.
+- the production, versioned native compatibility mechanism for same-instance UNO access;
+- the product-owned logical identity and reconciliation rules that will support durable history.
 
-## Next experiment
+## Next experiments
 
-The next R0A semantic experiment should test **identity and reconciliation**, not add another way to acquire or transport paragraph text.
+The next R0A identity work should extend the same evidence path rather than invent another acquisition or transport mechanism:
 
-The design constraints are strict:
+1. insertion/deletion around retained paragraphs;
+2. move/reorder;
+3. formatting-only changes;
+4. duplicate-text fixtures;
+5. save/reload and worker-restart reconciliation;
+6. callback/invalidation ordering relative to semantic revisions.
 
-1. retain the current same-instance semantic view and bounded process boundary;
-2. add only the structural metadata needed to test a concrete identity hypothesis;
-3. tag observations with explicit document/revision context before host-side caching becomes real;
-4. run deterministic insertion, deletion, split, merge, move and formatting-only edit sequences;
-5. measure candidate engine-side identity/property behaviour before inventing an adapter ID;
-6. distinguish stable engine properties from reconciliation heuristics;
-7. do not define a product `ParagraphId` or anchor contract until those edit sequences establish its invariants;
-8. separately qualify save/reload reconciliation because live-instance stability does not imply persistence stability;
-9. keep the internal 24.2 process-context dependency isolated until a production compatibility ADR is justified.
+The constraints remain strict:
 
-If Writer exposes no durable identity suitable for the product, the adapter will need an explicit identity/reconciliation layer rather than leaking engine addresses, hashing paragraph text or falling back to text offsets.
+- retain the same-instance semantic authority and bounded process boundary;
+- measure engine behaviour before inventing adapter IDs;
+- distinguish stable engine evidence from product reconciliation policy;
+- do not define product `ParagraphId` or durable anchors until the structural sequence establishes the necessary invariants;
+- keep the internal 24.2 process-context dependency isolated until a production compatibility ADR is justified.
+
+If Writer exposes no durable identity suitable for the product, Office will need an explicit product-owned identity/reconciliation layer rather than leaking engine addresses, hashing paragraph text or falling back to text offsets.
 
 ## Non-goals
 
@@ -243,7 +302,7 @@ This spike does not authorize:
 - using `TextOffset` as a history/comment/collaboration anchor;
 - exposing UNO or LibreOffice object references to Rust product code;
 - treating paragraph text hashes as identities;
-- treating UNO object/reference identity as product semantic identity;
+- treating UNO object/reference identity or view-local probe tokens as product semantic identity;
 - freezing the R0A paragraph snapshot encoding as the permanent wire schema;
 - requiring LibreOffice to reproduce today's OOXML serialization details;
 - launching a second office/document and treating its semantics as if they came from the live LOK authority;
