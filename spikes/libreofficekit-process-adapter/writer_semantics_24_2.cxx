@@ -1,4 +1,4 @@
-#include "writer_semantics_24_2.hxx"
+#include "writer_semantics_module_abi.hxx"
 
 #include <com/sun/star/container/XEnumeration.hpp>
 #include <com/sun/star/container/XEnumerationAccess.hpp>
@@ -13,84 +13,33 @@
 #include <rtl/textenc.h>
 #include <rtl/ustring.hxx>
 
-#include <dlfcn.h>
-
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <memory>
-#include <stdexcept>
+#include <new>
 #include <string>
-#include <utility>
-#include <vector>
 
 namespace css = com::sun::star;
 
+// Exact LibreOffice 24.2 processfactory.hxx signature.
+//
+// This internal ABI dependency exists only inside the version-pinned dynamic
+// compatibility module. The module is loaded after LibreOfficeKit has started
+// and unloaded before LibreOfficeKit teardown, so the adapter executable never
+// owns LibreOffice's UNO/merged-runtime lifetime.
+namespace comphelper
+{
+css::uno::Reference<css::uno::XComponentContext> getProcessComponentContext();
+}
+
 namespace
 {
-// Exact LibreOffice 24.2 merged-library ABI dependency.
-//
-// Ubuntu's no-GUI LibreOffice package merges comphelper into libmergedlo.so, and
-// LibreOfficeKit owns that library's dynamic lifetime. Do not link libmergedlo
-// into the adapter executable: doing so keeps its process-global static state
-// alive beyond LOK teardown and changes destruction order. Instead, look up the
-// exported 24.2 comphelper entry point on the library instance LOK already owns.
-// This remains qualification-only machinery behind the version-labelled TU.
-using GetProcessComponentContext =
-    css::uno::Reference<css::uno::XComponentContext> (*)();
-
-class DynamicLibraryHandle
+struct WriterSemanticView
 {
-public:
-    explicit DynamicLibraryHandle(void* value)
-        : value_(value)
-    {
-    }
-
-    ~DynamicLibraryHandle()
-    {
-        if (value_ != nullptr)
-            dlclose(value_);
-    }
-
-    DynamicLibraryHandle(const DynamicLibraryHandle&) = delete;
-    DynamicLibraryHandle& operator=(const DynamicLibraryHandle&) = delete;
-
-    [[nodiscard]] void* get() const noexcept { return value_; }
-
-private:
-    void* value_;
+    css::uno::Reference<css::text::XTextDocument> document;
 };
-
-css::uno::Reference<css::uno::XComponentContext> processComponentContext()
-{
-    dlerror();
-    DynamicLibraryHandle merged(
-        dlopen("libmergedlo.so", RTLD_LAZY | RTLD_LOCAL | RTLD_NOLOAD));
-    if (merged.get() == nullptr)
-    {
-        const char* error = dlerror();
-        throw std::runtime_error(
-            std::string("LibreOfficeKit merged runtime is not loaded: ")
-            + (error == nullptr ? "unknown dynamic-loader error" : error));
-    }
-
-    dlerror();
-    void* symbol = dlsym(
-        merged.get(),
-        "_ZN10comphelper26getProcessComponentContextEv");
-    if (symbol == nullptr)
-    {
-        const char* error = dlerror();
-        throw std::runtime_error(
-            std::string("LibreOffice 24.2 process-context symbol is unavailable: ")
-            + (error == nullptr ? "unknown dynamic-loader error" : error));
-    }
-
-    GetProcessComponentContext getContext = nullptr;
-    static_assert(sizeof(getContext) == sizeof(symbol));
-    std::memcpy(&getContext, &symbol, sizeof(getContext));
-    return getContext();
-}
 
 std::string utf8(const rtl::OUString& value)
 {
@@ -98,144 +47,229 @@ std::string utf8(const rtl::OUString& value)
     return std::string(encoded.getStr(), static_cast<std::size_t>(encoded.getLength()));
 }
 
-void setUnoError(std::string& error, const char* operation, const css::uno::Exception& exception)
+void writeError(char* output, std::size_t capacity, const std::string& message) noexcept
 {
-    error = std::string(operation) + ": " + utf8(exception.Message);
+    if (output == nullptr || capacity == 0)
+        return;
+
+    const std::size_t bytes = std::min(message.size(), capacity - 1);
+    if (bytes != 0)
+        std::memcpy(output, message.data(), bytes);
+    output[bytes] = '\0';
+}
+
+void writeU16(unsigned char* output, std::uint16_t value) noexcept
+{
+    output[0] = static_cast<unsigned char>(value & 0xffU);
+    output[1] = static_cast<unsigned char>((value >> 8U) & 0xffU);
+}
+
+std::unique_ptr<WriterSemanticView> acquireView(std::string& error)
+{
+    const auto context = comphelper::getProcessComponentContext();
+    if (!context.is())
+    {
+        error = "LibreOffice process component context is null";
+        return nullptr;
+    }
+
+    auto desktop = css::frame::Desktop::create(context);
+    auto components = desktop->getComponents();
+    if (!components.is())
+    {
+        error = "LibreOffice Desktop returned no component collection";
+        return nullptr;
+    }
+
+    auto enumeration = components->createEnumeration();
+    css::uno::Reference<css::text::XTextDocument> found;
+    std::size_t writerCount = 0;
+    while (enumeration->hasMoreElements())
+    {
+        css::uno::Any element = enumeration->nextElement();
+        css::uno::Reference<css::lang::XComponent> component;
+        if (!(element >>= component) || !component.is())
+            continue;
+
+        css::uno::Reference<css::text::XTextDocument> writer(component, css::uno::UNO_QUERY);
+        if (writer.is())
+        {
+            ++writerCount;
+            found = writer;
+        }
+    }
+
+    if (writerCount != 1 || !found.is())
+    {
+        error = "expected exactly one Writer XTextDocument in the LOK process; observed "
+                + std::to_string(writerCount);
+        return nullptr;
+    }
+
+    auto view = std::make_unique<WriterSemanticView>();
+    view->document = found;
+    return view;
+}
+
+int encodeParagraphs(
+    WriterSemanticView& view,
+    std::size_t maxParagraphs,
+    unsigned char* output,
+    std::size_t outputCapacity,
+    std::size_t& outputBytes,
+    std::string& error)
+{
+    constexpr std::size_t kLengthBytes = 2;
+    outputBytes = 0;
+    if (output == nullptr || outputCapacity < kLengthBytes)
+    {
+        error = "semantic output buffer is too small for paragraph count";
+        return r0a::kWriterSemanticStatusLimitExceeded;
+    }
+
+    std::size_t offset = kLengthBytes;
+    std::size_t paragraphCount = 0;
+    css::uno::Reference<css::container::XEnumerationAccess> access(
+        view.document->getText(), css::uno::UNO_QUERY_THROW);
+    auto enumeration = access->createEnumeration();
+    while (enumeration->hasMoreElements())
+    {
+        css::uno::Any element = enumeration->nextElement();
+        css::uno::Reference<css::uno::XInterface> interface;
+        if (!(element >>= interface) || !interface.is())
+            continue;
+
+        css::uno::Reference<css::text::XTextRange> range(interface, css::uno::UNO_QUERY);
+        if (!range.is())
+            continue;
+
+        const std::string paragraph = utf8(range->getString());
+        if (paragraphCount >= maxParagraphs || paragraphCount >= 0xffffU
+            || paragraph.size() > 0xffffU || offset > outputCapacity - kLengthBytes
+            || paragraph.size() > outputCapacity - kLengthBytes - offset)
+        {
+            error = "Writer paragraph snapshot exceeds R0A semantic accumulation bound";
+            return r0a::kWriterSemanticStatusLimitExceeded;
+        }
+
+        writeU16(output + offset, static_cast<std::uint16_t>(paragraph.size()));
+        offset += kLengthBytes;
+        if (!paragraph.empty())
+            std::memcpy(output + offset, paragraph.data(), paragraph.size());
+        offset += paragraph.size();
+        ++paragraphCount;
+    }
+
+    writeU16(output, static_cast<std::uint16_t>(paragraphCount));
+    outputBytes = offset;
+    return r0a::kWriterSemanticStatusOk;
 }
 } // namespace
 
-namespace r0a
+extern "C" std::uint32_t r0a_writer_semantics_abi_version()
 {
-struct WriterSemanticView::Impl
-{
-    css::uno::Reference<css::text::XTextDocument> document;
-};
-
-WriterSemanticView::WriterSemanticView(std::unique_ptr<Impl> impl)
-    : impl_(std::move(impl))
-{
+    return r0a::kWriterSemanticModuleAbiVersion;
 }
 
-WriterSemanticView::~WriterSemanticView() = default;
-WriterSemanticView::WriterSemanticView(WriterSemanticView&&) noexcept = default;
-WriterSemanticView& WriterSemanticView::operator=(WriterSemanticView&&) noexcept = default;
-
-std::unique_ptr<WriterSemanticView> WriterSemanticView::acquire(std::string& error)
+extern "C" void* r0a_writer_semantics_acquire(char* error, std::size_t errorCapacity)
 {
-    error.clear();
+    writeError(error, errorCapacity, "");
     try
     {
-        const auto context = processComponentContext();
-        if (!context.is())
+        std::string message;
+        auto view = acquireView(message);
+        if (!view)
         {
-            error = "LibreOffice process component context is null";
+            writeError(error, errorCapacity, message);
             return nullptr;
         }
-
-        auto desktop = css::frame::Desktop::create(context);
-        auto components = desktop->getComponents();
-        if (!components.is())
-        {
-            error = "LibreOffice Desktop returned no component collection";
-            return nullptr;
-        }
-
-        auto enumeration = components->createEnumeration();
-        css::uno::Reference<css::text::XTextDocument> found;
-        std::size_t writerCount = 0;
-        while (enumeration->hasMoreElements())
-        {
-            css::uno::Any element = enumeration->nextElement();
-            css::uno::Reference<css::lang::XComponent> component;
-            if (!(element >>= component) || !component.is())
-                continue;
-
-            css::uno::Reference<css::text::XTextDocument> writer(component, css::uno::UNO_QUERY);
-            if (writer.is())
-            {
-                ++writerCount;
-                found = writer;
-            }
-        }
-
-        if (writerCount != 1 || !found.is())
-        {
-            error = "expected exactly one Writer XTextDocument in the LOK process; observed "
-                    + std::to_string(writerCount);
-            return nullptr;
-        }
-
-        auto impl = std::make_unique<Impl>();
-        impl->document = found;
-        return std::unique_ptr<WriterSemanticView>(new WriterSemanticView(std::move(impl)));
+        return view.release();
     }
     catch (const css::uno::Exception& exception)
     {
-        setUnoError(error, "acquire Writer semantic view", exception);
+        writeError(
+            error,
+            errorCapacity,
+            "acquire Writer semantic view: " + utf8(exception.Message));
         return nullptr;
     }
     catch (const std::exception& exception)
     {
-        error = std::string("acquire Writer semantic view: ") + exception.what();
+        writeError(
+            error,
+            errorCapacity,
+            std::string("acquire Writer semantic view: ") + exception.what());
+        return nullptr;
+    }
+    catch (...)
+    {
+        writeError(error, errorCapacity, "acquire Writer semantic view: unknown native exception");
         return nullptr;
     }
 }
 
-ParagraphSnapshot WriterSemanticView::paragraphs(
+extern "C" void r0a_writer_semantics_release(void* view)
+{
+    delete static_cast<WriterSemanticView*>(view);
+}
+
+extern "C" int r0a_writer_semantics_encode_paragraphs(
+    void* view,
     std::size_t maxParagraphs,
-    std::size_t maxEncodedParagraphBytes) const
+    unsigned char* output,
+    std::size_t outputCapacity,
+    std::size_t* outputBytes,
+    char* error,
+    std::size_t errorCapacity)
 {
-    ParagraphSnapshot snapshot;
-    std::size_t encodedParagraphBytes = 0;
-    snapshot.paragraphs.reserve(maxParagraphs);
+    if (outputBytes != nullptr)
+        *outputBytes = 0;
+    writeError(error, errorCapacity, "");
+    if (view == nullptr || outputBytes == nullptr)
+    {
+        writeError(error, errorCapacity, "invalid Writer semantic module arguments");
+        return r0a::kWriterSemanticStatusError;
+    }
 
     try
     {
-        css::uno::Reference<css::container::XEnumerationAccess> access(
-            impl_->document->getText(), css::uno::UNO_QUERY_THROW);
-        auto enumeration = access->createEnumeration();
-        while (enumeration->hasMoreElements())
+        std::string message;
+        std::size_t encodedBytes = 0;
+        const int status = encodeParagraphs(
+            *static_cast<WriterSemanticView*>(view),
+            maxParagraphs,
+            output,
+            outputCapacity,
+            encodedBytes,
+            message);
+        if (status != r0a::kWriterSemanticStatusOk)
         {
-            css::uno::Any element = enumeration->nextElement();
-            css::uno::Reference<css::uno::XInterface> interface;
-            if (!(element >>= interface) || !interface.is())
-                continue;
-
-            css::uno::Reference<css::text::XTextRange> range(interface, css::uno::UNO_QUERY);
-            if (!range.is())
-                continue;
-
-            std::string paragraph = utf8(range->getString());
-            constexpr std::size_t kEncodedLengthBytes = 2;
-            if (snapshot.paragraphs.size() >= maxParagraphs
-                || paragraph.size() > 0xffffU
-                || maxEncodedParagraphBytes < kEncodedLengthBytes
-                || encodedParagraphBytes > maxEncodedParagraphBytes - kEncodedLengthBytes
-                || paragraph.size()
-                       > maxEncodedParagraphBytes - kEncodedLengthBytes - encodedParagraphBytes)
-            {
-                snapshot.status = SemanticReadStatus::LimitExceeded;
-                snapshot.paragraphs.clear();
-                snapshot.error = "Writer paragraph snapshot exceeds R0A semantic accumulation bound";
-                return snapshot;
-            }
-
-            encodedParagraphBytes += kEncodedLengthBytes + paragraph.size();
-            snapshot.paragraphs.push_back(std::move(paragraph));
+            writeError(error, errorCapacity, message);
+            return status;
         }
+
+        *outputBytes = encodedBytes;
+        return r0a::kWriterSemanticStatusOk;
     }
     catch (const css::uno::Exception& exception)
     {
-        snapshot.status = SemanticReadStatus::Error;
-        snapshot.paragraphs.clear();
-        setUnoError(snapshot.error, "enumerate Writer paragraphs", exception);
+        writeError(
+            error,
+            errorCapacity,
+            "enumerate Writer paragraphs: " + utf8(exception.Message));
+        return r0a::kWriterSemanticStatusError;
     }
     catch (const std::exception& exception)
     {
-        snapshot.status = SemanticReadStatus::Error;
-        snapshot.paragraphs.clear();
-        snapshot.error = std::string("enumerate Writer paragraphs: ") + exception.what();
+        writeError(
+            error,
+            errorCapacity,
+            std::string("enumerate Writer paragraphs: ") + exception.what());
+        return r0a::kWriterSemanticStatusError;
     }
-    return snapshot;
+    catch (...)
+    {
+        writeError(error, errorCapacity, "enumerate Writer paragraphs: unknown native exception");
+        return r0a::kWriterSemanticStatusError;
+    }
 }
-} // namespace r0a
