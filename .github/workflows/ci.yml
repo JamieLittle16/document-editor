@@ -140,10 +140,10 @@ jobs:
           path: /tmp/document-editor-native-build.log
           if-no-files-found: error
           retention-days: 7
-      - name: Qualify real-engine lifecycle and same-instance semantics
+      - name: Qualify real-engine lifecycle, semantics and structural identity
         run: |
           R0A_WRITER_SEMANTICS_MODULE=/tmp/libdocument-editor-writer-semantics-24-2.so \
-            python3 spikes/libreofficekit-process-adapter/process_harness.py \
+            python3 spikes/libreofficekit-process-adapter/structural_identity_contract.py \
               /tmp/document-editor-lok-process-adapter \
               /usr/lib/libreoffice/program \
               /tmp/document-editor-lok-input.docx
