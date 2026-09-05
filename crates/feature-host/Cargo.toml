@@ -1,0 +1,13 @@
+[package]
+name = "feature-host"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+extension-api = { path = "../extension-api" }
+extension-runtime = { path = "../extension-runtime" }
+
+[lints]
+workspace = true

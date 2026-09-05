@@ -1,10 +1,14 @@
 #![doc = "Deterministic in-memory engine used to prove session semantics without heavyweight dependencies."]
 
-use document_engine_api::{DocumentEngine, EngineError};
+use document_engine_api::{DocumentEngine, EngineError, SemanticObservation};
 use document_protocol::{
     DocumentCapability, DocumentRevision, DocumentTransaction, EngineCapabilities, ProtocolError,
-    ProtocolVersion, TransactionApplied,
+    ProtocolVersion, TransactionApplied, TransactionLimits,
 };
+
+/// R0A mock admission policy. Production engines will qualify their own explicit limits.
+const MOCK_TRANSACTION_LIMITS: TransactionLimits =
+    TransactionLimits::new(4096, 16 * 1024 * 1024, 64 * 1024 * 1024);
 
 #[derive(Default)]
 pub struct MockDocumentEngine {
@@ -35,8 +39,9 @@ impl DocumentEngine for MockDocumentEngine {
         Ok(self.revision)
     }
 
-    fn semantic_text(&self) -> Result<String, EngineError> {
-        self.document.clone().ok_or(EngineError::NotOpen)
+    fn semantic_text(&self) -> Result<SemanticObservation<String>, EngineError> {
+        let value = self.document.clone().ok_or(EngineError::NotOpen)?;
+        Ok(SemanticObservation::new(self.revision, value))
     }
 
     fn apply_transaction(
@@ -52,19 +57,13 @@ impl DocumentEngine for MockDocumentEngine {
         }
 
         let document = self.document.as_mut().ok_or(EngineError::NotOpen)?;
+        transaction.validate_against(document, MOCK_TRANSACTION_LIMITS)?;
+
         let mut edits = transaction.edits;
         edits.sort_by_key(|edit| edit.start_utf8);
-
-        for pair in edits.windows(2) {
-            if pair[0].end_utf8 > pair[1].start_utf8 {
-                return Err(ProtocolError::InvalidRange.into());
-            }
-        }
-        for edit in &edits {
-            edit.validate(document)?;
-        }
         for edit in edits.into_iter().rev() {
-            document.replace_range(edit.start_utf8..edit.end_utf8, &edit.replacement);
+            let range = edit.byte_range(document)?;
+            document.replace_range(range, &edit.replacement);
         }
 
         let previous_revision = self.revision;
@@ -79,9 +78,15 @@ impl DocumentEngine for MockDocumentEngine {
 #[cfg(test)]
 mod tests {
     use document_engine_api::DocumentEngine;
-    use document_protocol::{DocumentRevision, DocumentTransaction, ProtocolError, TextEdit};
+    use document_protocol::{
+        DocumentRevision, DocumentTransaction, ProtocolError, TextEdit, TextOffset,
+    };
 
     use super::*;
+
+    fn offset(value: u64) -> TextOffset {
+        TextOffset::new(value)
+    }
 
     #[test]
     fn transaction_advances_revision_atomically() {
@@ -92,15 +97,44 @@ mod tests {
             .apply_transaction(DocumentTransaction {
                 expected_revision: DocumentRevision::INITIAL,
                 edits: vec![TextEdit {
-                    start_utf8: 6,
-                    end_utf8: 11,
+                    start_utf8: offset(6),
+                    end_utf8: offset(11),
                     replacement: "editor".into(),
                 }],
             })
             .unwrap();
 
         assert_eq!(result.new_revision, DocumentRevision::new(1));
-        assert_eq!(engine.semantic_text().unwrap(), "hello editor");
+        let observation = engine.semantic_text().unwrap();
+        assert_eq!(observation.revision(), DocumentRevision::new(1));
+        assert_eq!(observation.value(), "hello editor");
+    }
+
+    #[test]
+    fn semantic_observation_is_stamped_with_exact_read_revision() {
+        let mut engine = MockDocumentEngine::default();
+        engine.open_text_fixture("abc".into()).unwrap();
+
+        let initial = engine.semantic_text().unwrap();
+        assert_eq!(initial.revision(), DocumentRevision::INITIAL);
+        assert_eq!(initial.value(), "abc");
+
+        engine
+            .apply_transaction(DocumentTransaction {
+                expected_revision: DocumentRevision::INITIAL,
+                edits: vec![TextEdit {
+                    start_utf8: offset(0),
+                    end_utf8: offset(1),
+                    replacement: "A".into(),
+                }],
+            })
+            .unwrap();
+
+        let current = engine.semantic_text().unwrap();
+        assert_eq!(current.revision(), DocumentRevision::new(1));
+        assert_eq!(current.value(), "Abc");
+        assert_eq!(initial.revision(), DocumentRevision::INITIAL);
+        assert_eq!(initial.value(), "abc");
     }
 
     #[test]
@@ -111,8 +145,8 @@ mod tests {
             .apply_transaction(DocumentTransaction {
                 expected_revision: DocumentRevision::INITIAL,
                 edits: vec![TextEdit {
-                    start_utf8: 0,
-                    end_utf8: 1,
+                    start_utf8: offset(0),
+                    end_utf8: offset(1),
                     replacement: "A".into(),
                 }],
             })
@@ -129,5 +163,38 @@ mod tests {
             error,
             EngineError::Protocol(ProtocolError::RevisionConflict { .. })
         ));
+    }
+
+    #[test]
+    fn invalid_multi_edit_transaction_changes_nothing() {
+        let mut engine = MockDocumentEngine::default();
+        engine.open_text_fixture("abcdef".into()).unwrap();
+
+        let error = engine
+            .apply_transaction(DocumentTransaction {
+                expected_revision: DocumentRevision::INITIAL,
+                edits: vec![
+                    TextEdit {
+                        start_utf8: offset(0),
+                        end_utf8: offset(2),
+                        replacement: "X".into(),
+                    },
+                    TextEdit {
+                        start_utf8: offset(1),
+                        end_utf8: offset(3),
+                        replacement: "Y".into(),
+                    },
+                ],
+            })
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            EngineError::Protocol(ProtocolError::InvalidRange)
+        ));
+        let observation = engine.semantic_text().unwrap();
+        assert_eq!(observation.value(), "abcdef");
+        assert_eq!(observation.revision(), DocumentRevision::INITIAL);
+        assert_eq!(engine.revision().unwrap(), DocumentRevision::INITIAL);
     }
 }
