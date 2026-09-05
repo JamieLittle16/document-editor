@@ -101,6 +101,7 @@ jobs:
             /usr/lib/libreoffice/program/types/offapi.rdb
       - name: Build LibreOfficeKit native process adapter
         run: |
+          set -o pipefail
           g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
             -I/usr/include/libreoffice \
             -I/usr/include/x86_64-linux-gnu/libreoffice \
@@ -117,7 +118,16 @@ jobs:
             -luno_salhelpergcc3 \
             -luno_sal \
             -ldl \
-            -o /tmp/document-editor-lok-process-adapter
+            -o /tmp/document-editor-lok-process-adapter \
+            2>&1 | tee /tmp/document-editor-native-build.log
+      - name: Retain native adapter compiler diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-adapter-build-log
+          path: /tmp/document-editor-native-build.log
+          if-no-files-found: error
+          retention-days: 7
       - name: Qualify real-engine lifecycle and same-instance semantics
         run: |
           python3 spikes/libreofficekit-process-adapter/process_harness.py \
