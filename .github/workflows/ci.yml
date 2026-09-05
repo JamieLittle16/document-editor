@@ -102,7 +102,10 @@ jobs:
       - name: Build LibreOfficeKit native process adapter
         run: |
           set -o pipefail
+          # UNO SDK headers require the Unix platform contract explicitly when this
+          # version-pinned semantic TU is compiled without a LibreOfficeKit header.
           g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
+            -DSAL_UNX \
             -I/usr/include/libreoffice \
             -I/usr/include/x86_64-linux-gnu/libreoffice \
             -I/tmp/document-editor-uno-generated \
