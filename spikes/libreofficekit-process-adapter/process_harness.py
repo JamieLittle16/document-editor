@@ -31,7 +31,7 @@ COMMAND_SHUTDOWN = 4
 COMMAND_SEMANTIC_SNAPSHOT = 5
 COMMAND_INSERT_PREFIX = 6
 
-SEMANTIC_PROJECTION_VERSION = 1
+SEMANTIC_PROJECTION_VERSION = 2
 EXPECTED_PARAGRAPHS = (
     "Document Editor LibreOfficeKit R0A probe",
     "This fixture is generated deterministically in CI.",
@@ -138,15 +138,16 @@ class NativeAdapter:
             raise RuntimeError(f"invalid native-adapter layout: {width}x{height}")
         return width, height
 
-    def semantic_snapshot(self, request_id: int) -> tuple[str, ...]:
+    def semantic_snapshot(self, request_id: int) -> tuple[int, tuple[str, ...]]:
         payload = self.request(request_id, bytes([COMMAND_SEMANTIC_SNAPSHOT]))
-        if len(payload) < 5 or payload[0:3] != bytes(
+        if len(payload) < 13 or payload[0:3] != bytes(
             [STATUS_OK, COMMAND_SEMANTIC_SNAPSHOT, SEMANTIC_PROJECTION_VERSION]
         ):
             raise RuntimeError(f"unexpected semantic-snapshot response: {payload!r}")
 
-        paragraph_count = struct.unpack_from("<H", payload, 3)[0]
-        offset = 5
+        revision = struct.unpack_from("<Q", payload, 3)[0]
+        paragraph_count = struct.unpack_from("<H", payload, 11)[0]
+        offset = 13
         paragraphs: list[str] = []
         for _ in range(paragraph_count):
             if offset + 2 > len(payload):
@@ -160,7 +161,7 @@ class NativeAdapter:
             offset = end
         if offset != len(payload):
             raise RuntimeError("semantic snapshot contains trailing bytes")
-        return tuple(paragraphs)
+        return revision, tuple(paragraphs)
 
     def insert_prefix(self, request_id: int, prefix: str) -> None:
         encoded = prefix.encode("utf-8")
@@ -225,11 +226,21 @@ def main() -> int:
         version = check_engine_info(graceful, 0x1122334455667788)
         width, height = graceful.open_document(2, input_docx)
 
-        before = graceful.semantic_snapshot(3)
+        before_revision, before = graceful.semantic_snapshot(3)
+        if before_revision != 0:
+            raise RuntimeError(
+                f"newly opened native document did not begin at revision 0: {before_revision}"
+            )
         if before != EXPECTED_PARAGRAPHS:
             raise RuntimeError(f"unexpected live semantic snapshot before edit: {before!r}")
         graceful.insert_prefix(4, LIVE_PREFIX)
-        after = graceful.semantic_snapshot(5)
+        after_revision, after = graceful.semantic_snapshot(5)
+        if after_revision != 1:
+            raise RuntimeError(
+                f"successful native mutation did not advance revision exactly once: {after_revision}"
+            )
+        if after_revision <= before_revision:
+            raise RuntimeError("native semantic revision did not advance after mutation")
         expected_after = (LIVE_PREFIX + EXPECTED_PARAGRAPHS[0], *EXPECTED_PARAGRAPHS[1:])
         if after != expected_after:
             raise RuntimeError(f"same-instance semantic snapshot missed unsaved edit: {after!r}")
@@ -276,7 +287,11 @@ def main() -> int:
 
         restarted = NativeAdapter(executable, install, root / "restarted")
         restart_width, restart_height = restarted.open_document(11, input_docx)
-        restart_snapshot = restarted.semantic_snapshot(12)
+        restart_revision, restart_snapshot = restarted.semantic_snapshot(12)
+        if restart_revision != 0:
+            raise RuntimeError(
+                f"freshly reopened document did not restart native revision at 0: {restart_revision}"
+            )
         if restart_snapshot != EXPECTED_PARAGRAPHS:
             raise RuntimeError(f"restarted semantic snapshot mismatch: {restart_snapshot!r}")
         restarted.graceful_shutdown(13)
@@ -296,7 +311,11 @@ def main() -> int:
         print(f"native_adapter_restart_open_twips={restart_width}x{restart_height}")
         print(f"native_adapter_profile_files={profile_files}")
         print(f"native_adapter_semantic_paragraphs={len(before)}")
+        print(f"native_adapter_semantic_revision_before={before_revision}")
+        print(f"native_adapter_semantic_revision_after={after_revision}")
+        print(f"native_adapter_semantic_revision_restart={restart_revision}")
         print("native_adapter_live_semantic_snapshot=ok")
+        print("native_adapter_semantic_revision_stamp=ok")
         print("native_adapter_unsaved_lok_edit_visible_in_snapshot=ok")
         print("native_adapter_semantic_view_closed_with_document=ok")
         print("native_adapter_oversized_live_semantic_snapshot_rejected=ok")
