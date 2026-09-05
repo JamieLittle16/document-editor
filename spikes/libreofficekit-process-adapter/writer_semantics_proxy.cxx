@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -21,6 +22,18 @@ constexpr std::size_t kErrorBytes = 512;
 constexpr std::size_t kCountBytes = 2;
 constexpr std::size_t kLengthBytes = 2;
 constexpr const char* kModulePathEnvironment = "R0A_WRITER_SEMANTICS_MODULE";
+
+void markProcessFinalization()
+{
+    std::fputs("native_adapter_lifecycle=entered_process_finalization\n", stderr);
+    std::fflush(stderr);
+}
+
+void registerProcessFinalizationMarker()
+{
+    static const bool registered = std::atexit(markProcessFinalization) == 0;
+    (void)registered;
+}
 
 template <typename Function>
 Function loadFunction(void* library, const char* name)
@@ -88,6 +101,8 @@ WriterSemanticView& WriterSemanticView::operator=(WriterSemanticView&&) noexcept
 std::unique_ptr<WriterSemanticView> WriterSemanticView::acquire(std::string& error)
 {
     error.clear();
+    registerProcessFinalizationMarker();
+
     const char* modulePath = std::getenv(kModulePathEnvironment);
     if (modulePath == nullptr || modulePath[0] == '\0')
     {
