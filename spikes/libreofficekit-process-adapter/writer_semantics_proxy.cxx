@@ -75,6 +75,7 @@ struct WriterSemanticView::Impl
     WriterSemanticEncodeIdentityParagraphsFn encodeIdentityParagraphs = nullptr;
     WriterSemanticSplitFirstParagraphFn splitFirstParagraph = nullptr;
     WriterSemanticMergeFirstTwoParagraphsFn mergeFirstTwoParagraphs = nullptr;
+    WriterSemanticCenterFirstParagraphFn centerFirstParagraph = nullptr;
 
     ~Impl()
     {
@@ -133,6 +134,8 @@ std::unique_ptr<WriterSemanticView> WriterSemanticView::acquire(std::string& err
             library, "r0a_writer_semantics_split_first_paragraph");
         const auto mergeFirstTwoParagraphs = loadFunction<WriterSemanticMergeFirstTwoParagraphsFn>(
             library, "r0a_writer_semantics_merge_first_two_paragraphs");
+        const auto centerFirstParagraph = loadFunction<WriterSemanticCenterFirstParagraphFn>(
+            library, "r0a_writer_semantics_center_first_paragraph");
 
         const std::uint32_t version = abiVersion();
         if (version != kWriterSemanticModuleAbiVersion)
@@ -161,6 +164,7 @@ std::unique_ptr<WriterSemanticView> WriterSemanticView::acquire(std::string& err
         impl->encodeIdentityParagraphs = encodeIdentityParagraphs;
         impl->splitFirstParagraph = splitFirstParagraph;
         impl->mergeFirstTwoParagraphs = mergeFirstTwoParagraphs;
+        impl->centerFirstParagraph = centerFirstParagraph;
         return std::unique_ptr<WriterSemanticView>(new WriterSemanticView(std::move(impl)));
     }
     catch (const std::exception& exception)
@@ -387,6 +391,21 @@ bool WriterSemanticView::mergeFirstTwoParagraphs(std::string& error)
     }
 
     error = errorText(moduleError, "Writer merge structural probe failed");
+    return false;
+}
+
+bool WriterSemanticView::centerFirstParagraph(std::string& error)
+{
+    std::array<char, kErrorBytes> moduleError{};
+    const int status = impl_->centerFirstParagraph(
+        impl_->view, moduleError.data(), moduleError.size());
+    if (status == kWriterSemanticStatusOk)
+    {
+        error.clear();
+        return true;
+    }
+
+    error = errorText(moduleError, "Writer paragraph-format probe failed");
     return false;
 }
 } // namespace r0a
