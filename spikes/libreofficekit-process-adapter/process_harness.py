@@ -174,12 +174,19 @@ class NativeAdapter:
         if payload != bytes([STATUS_OK, COMMAND_SHUTDOWN]):
             raise RuntimeError(f"unexpected shutdown response: {payload!r}")
         self.stdin.close()
+        return self._require_clean_exit("shutdown")
+
+    def clean_eof(self) -> str:
+        self.stdin.close()
+        return self._require_clean_exit("stdin EOF")
+
+    def _require_clean_exit(self, reason: str) -> str:
         status = self.process.wait(timeout=10)
         if status != 0:
             stderr = self.stderr.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"native adapter shutdown failed: {status} {stderr!r}")
+            raise RuntimeError(f"native adapter {reason} failed: {status} {stderr!r}")
         if read_frame(self.stdout) is not None:
-            raise RuntimeError("native adapter emitted a frame after shutdown")
+            raise RuntimeError(f"native adapter emitted a frame after {reason}")
         return self.stderr.read().decode("utf-8", errors="replace")
 
 
@@ -265,6 +272,13 @@ def main() -> int:
         if (graceful.home / ".config" / "libreoffice").exists():
             raise RuntimeError("LibreOffice unexpectedly used HOME profile instead of explicit profile URL")
 
+        eof = NativeAdapter(executable, install, root / "clean-eof")
+        eof.open_document(40, input_docx)
+        eof_revision, eof_snapshot = eof.semantic_snapshot(41)
+        if eof_revision != 0 or eof_snapshot != EXPECTED_PARAGRAPHS:
+            raise RuntimeError("clean-EOF qualification did not establish a live semantic session")
+        eof.clean_eof()
+
         limited = NativeAdapter(executable, install, root / "semantic-limit")
         limited.open_document(30, input_docx)
         limit_prefix = "X" * 256
@@ -323,6 +337,7 @@ def main() -> int:
         print("native_adapter_typed_load_failure=ok")
         print("native_adapter_invalid_command=ok")
         print("native_adapter_graceful_exit=ok")
+        print("native_adapter_clean_stdin_eof=ok")
         print("native_adapter_forced_exit=observed")
         print("native_adapter_restart=ok")
         print("native_adapter_status=ok")
