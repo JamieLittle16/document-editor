@@ -1,9 +1,11 @@
 #include "writer_semantics_module_abi.hxx"
 
+#include <com/sun/star/beans/XPropertySet.hpp>
 #include <com/sun/star/container/XEnumeration.hpp>
 #include <com/sun/star/container/XEnumerationAccess.hpp>
 #include <com/sun/star/frame/Desktop.hpp>
 #include <com/sun/star/lang/XComponent.hpp>
+#include <com/sun/star/style/ParagraphAdjust.hpp>
 #include <com/sun/star/text/ControlCharacter.hpp>
 #include <com/sun/star/text/XParagraphCursor.hpp>
 #include <com/sun/star/text/XText.hpp>
@@ -346,6 +348,35 @@ int mergeFirstTwoParagraphs(WriterSemanticView& view, std::string& error)
     return r0a::kWriterSemanticStatusOk;
 }
 
+int centerFirstParagraph(WriterSemanticView& view, std::string& error)
+{
+    const auto paragraphs = observeParagraphs(view);
+    if (paragraphs.empty())
+    {
+        error = "Writer document has no first paragraph to format";
+        return r0a::kWriterSemanticStatusError;
+    }
+
+    css::uno::Reference<css::beans::XPropertySet> properties(
+        paragraphs.front().object, css::uno::UNO_QUERY_THROW);
+    const rtl::OUString propertyName = rtl::OUString::createFromAscii("ParaAdjust");
+    const sal_Int16 centered = static_cast<sal_Int16>(css::style::ParagraphAdjust_CENTER);
+
+    css::uno::Any value;
+    value <<= centered;
+    properties->setPropertyValue(propertyName, value);
+
+    sal_Int16 observed = -1;
+    const css::uno::Any readBack = properties->getPropertyValue(propertyName);
+    if (!(readBack >>= observed) || observed != centered)
+    {
+        error = "Writer ParaAdjust CENTER formatting did not read back after mutation";
+        return r0a::kWriterSemanticStatusError;
+    }
+
+    return r0a::kWriterSemanticStatusOk;
+}
+
 template <typename Operation>
 int runModuleOperation(
     const char* operationName,
@@ -532,5 +563,25 @@ extern "C" int r0a_writer_semantics_merge_first_two_paragraphs(
         errorCapacity,
         [&](std::string& message) {
             return mergeFirstTwoParagraphs(*static_cast<WriterSemanticView*>(view), message);
+        });
+}
+
+extern "C" int r0a_writer_semantics_center_first_paragraph(
+    void* view,
+    char* error,
+    std::size_t errorCapacity)
+{
+    if (view == nullptr)
+    {
+        writeError(error, errorCapacity, "invalid Writer paragraph-format module arguments");
+        return r0a::kWriterSemanticStatusError;
+    }
+
+    return runModuleOperation(
+        "center first Writer paragraph",
+        error,
+        errorCapacity,
+        [&](std::string& message) {
+            return centerFirstParagraph(*static_cast<WriterSemanticView*>(view), message);
         });
 }
