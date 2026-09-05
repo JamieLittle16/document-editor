@@ -8,13 +8,14 @@ The application needs semantic identities that can support selection recovery, G
 
 R0A therefore measures candidate identity and reconciliation signals before any permanent anchor model is designed.
 
-The evidence now answers five questions:
+The evidence now answers six questions:
 
 1. can DOCX paragraph metadata serve as durable product identity? **No.**
 2. can public LibreOfficeKit view/accessibility APIs provide deterministic whole-document live semantics? **Not in the qualified headless configuration.**
 3. can a richer native semantic layer reach the exact Writer document already owned by LibreOfficeKit without creating a second authority? **Yes, in the pinned 24.2 environment.**
 4. can normalized revision-stamped live semantics cross the isolated engine process boundary without exposing UNO types? **Yes, for the bounded R0A paragraph projection.**
-5. does Writer paragraph UNO-object identity behave like durable logical identity under split/merge? **No. It is useful local continuity evidence, but a semantic split/merge round trip can destroy the original object identity.**
+5. does Writer paragraph UNO-object identity behave like durable logical identity under interior split/merge? **No. A semantic round trip can destroy the original object identity.**
+6. does simple paragraph-boundary insertion/deletion behave more stably? **No. Inserting then deleting an empty adjacent paragraph reproduces the same non-invertible object relation.**
 
 A production paragraph identity/reconciliation model is still deliberately unresolved.
 
@@ -192,54 +193,63 @@ This establishes where semantic information can flow and how freshness can be ch
 
 ## Qualified live structural identity observation
 
-The next experiment retained the same semantic authority and added qualification-only paragraph-object probes plus two deterministic structural operations:
-
-- split the first paragraph at character offset `8`;
-- merge the resulting first two paragraphs by deleting their paragraph boundary.
-
 Inside one live semantic view, a monotonically increasing probe token represents UNO same-object equality only. Tokens are view-local evidence and are never product identity.
 
-Two independent CI executions reproduced the same relation.
+### Interior split/merge
 
-Representative token trace:
+The first structural sequence splits the first paragraph at character offset `8`, then merges the resulting first two paragraphs.
 
-```text
-R0 before split:       (1, 2, 3)
-R1 after split:        (4, 1, 2, 3)
-R2 after merge:        (4, 2, 3)
-```
-
-CI pins only the relation, not the numeric token values:
+Two independent CI executions reproduced:
 
 ```text
-R0 -> R1 split
-0 -> 1
-1 -> 2
-2 -> 3
+representative R0: (1, 2, 3)
+representative R1: (4, 1, 2, 3)
+representative R2: (4, 2, 3)
 
-R1 -> R2 merge
-0 -> 0
-1 -> deleted
-2 -> 1
-3 -> 2
-
-R0 -> R2 semantic round trip
-0 -> deleted
-1 -> 1
-2 -> 2
+pinned R0 -> R1: 0->1;1->2;2->3
+pinned R1 -> R2: 0->0;1->-;2->1;3->2
+pinned R0 -> R2: 0->-;1->1;2->2
 ```
 
-The first paragraph's original Writer object survives the split as the **right fragment**. Writer creates a new object for the **left fragment**. Merging the two fragments then preserves the left/new object and destroys the right/original object.
+Writer creates a new object for the left fragment, preserves the original first-paragraph object as the right fragment, then preserves the left/new object and destroys the right/original object when merging.
 
 The final paragraph text is identical to the original paragraph text, but the original first-paragraph Writer object identity no longer exists.
+
+### Boundary insertion/deletion
+
+The next experiment runs in a fresh process and reuses the same structural command at the exact end of paragraph 1. That inserts an empty paragraph between the original first and second paragraphs without adding a new native command or ABI concept.
+
+It requires:
+
+```text
+R0: (P0, P1, P2)
+R1: (P0, "", P1, P2)
+R2: (P0, P1, P2)
+```
+
+Two independent CI executions reproduced the **same identity relation** as the interior split/merge experiment:
+
+```text
+representative R0: (1, 2, 3)
+representative R1: (4, 1, 2, 3)
+representative R2: (4, 2, 3)
+
+pinned R0 -> R1: 0->1;1->2;2->3
+pinned R1 -> R2: 0->0;1->-;2->1;3->2
+pinned R0 -> R2: 0->-;1->1;2->2
+```
+
+Even this semantically simple insertion/deletion round trip replaces the original `P0` object. Untouched later paragraph objects remain continuous.
 
 ### Conclusion: engine object identity
 
 **UNO object identity is useful local continuity evidence, but it is not durable logical identity.**
 
-A structural semantic round trip is not identity-invertible at the bootstrap-engine object level. Office history, comments, collaboration anchors and durable selections must therefore live above engine object identity.
+The evidence is now stronger than a single split edge case. Both an interior split/merge and an empty paragraph insertion/deletion restore exact paragraph semantics while failing to restore the original first-paragraph engine object.
 
-The exact qualification, CI contract and architectural consequences are recorded in `STRUCTURAL_IDENTITY_QUALIFICATION.md`.
+Office history, comments, collaboration anchors and durable selections must therefore live above engine object identity. Engine identity may inform reconciliation, but cannot define it.
+
+The exact qualification, CI contracts and architectural consequences are recorded in `STRUCTURAL_IDENTITY_QUALIFICATION.md`.
 
 ## What this spike proves
 
@@ -255,13 +265,13 @@ The exact qualification, CI contract and architectural consequences are recorded
 - revision-stamped ordered paragraph text can cross the isolated process boundary in a hard-bounded native-neutral response;
 - semantic access is removed when the owning document closes and can be freshly reacquired after process restart;
 - paragraph UNO same-object equality is repeatable within an unchanged live view;
-- split/merge preserves some paragraph objects but is not logically invertible;
+- both tested structural round trips preserve some paragraph objects but are not logically invertible;
 - semantic equality after a structural round trip does not imply restoration of engine-object identity;
+- paragraph-boundary insertion/deletion can replace an original object even when the inserted paragraph is empty;
 - binary package size, probe-token numbers and rendered raster hashes remain observations rather than semantic goldens.
 
 ## What remains unresolved
 
-- identity through insertion/deletion adjacent to retained paragraphs;
 - identity through paragraph move/reorder;
 - formatting-only edit behaviour;
 - duplicate-text reconciliation where content matching is ambiguous;
@@ -277,12 +287,11 @@ The exact qualification, CI contract and architectural consequences are recorded
 
 The next R0A identity work should extend the same evidence path rather than invent another acquisition or transport mechanism:
 
-1. insertion/deletion around retained paragraphs;
-2. move/reorder;
-3. formatting-only changes;
-4. duplicate-text fixtures;
-5. save/reload and worker-restart reconciliation;
-6. callback/invalidation ordering relative to semantic revisions.
+1. move/reorder;
+2. formatting-only changes;
+3. duplicate-text fixtures;
+4. save/reload and worker-restart reconciliation;
+5. callback/invalidation ordering relative to semantic revisions.
 
 The constraints remain strict:
 
