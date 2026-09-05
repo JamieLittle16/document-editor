@@ -285,7 +285,7 @@ int splitFirstParagraph(
     if (characterOffset == 0
         || characterOffset > static_cast<std::uint16_t>(std::numeric_limits<sal_Int16>::max()))
     {
-        error = "split offset must be strictly inside the first Writer paragraph";
+        error = "split offset must be nonzero and within the first Writer paragraph";
         return r0a::kWriterSemanticStatusError;
     }
 
@@ -300,9 +300,9 @@ int splitFirstParagraph(
         return r0a::kWriterSemanticStatusError;
     }
     const sal_Int32 firstParagraphLength = firstParagraph->getString().getLength();
-    if (static_cast<sal_Int32>(characterOffset) >= firstParagraphLength)
+    if (static_cast<sal_Int32>(characterOffset) > firstParagraphLength)
     {
-        error = "split offset must be strictly inside the first Writer paragraph";
+        error = "split offset must not exceed the end of the first Writer paragraph";
         return r0a::kWriterSemanticStatusError;
     }
 
