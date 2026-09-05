@@ -18,5 +18,6 @@ fn main() {
         })
         .expect("apply transaction");
 
-    println!("{}", session.semantic_text().expect("semantic text"));
+    let observation = session.semantic_text().expect("semantic text");
+    println!("{}", observation.value());
 }
