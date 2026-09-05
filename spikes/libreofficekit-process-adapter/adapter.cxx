@@ -38,8 +38,12 @@ constexpr unsigned char kCommandClose = 3;
 constexpr unsigned char kCommandShutdown = 4;
 constexpr unsigned char kCommandSemanticSnapshot = 5;
 constexpr unsigned char kCommandInsertPrefix = 6;
+constexpr unsigned char kCommandIdentityProbeSnapshot = 7;
+constexpr unsigned char kCommandSplitFirstParagraph = 8;
+constexpr unsigned char kCommandMergeFirstTwoParagraphs = 9;
 
 constexpr unsigned char kSemanticProjectionVersion = 2;
+constexpr unsigned char kIdentityProbeProjectionVersion = 1;
 constexpr std::size_t kSemanticResponseFixedBytes = 13;
 constexpr std::size_t kSemanticParagraphLengthBytes = 2;
 static_assert(kMaxPayloadBytes > kSemanticResponseFixedBytes);
@@ -47,6 +51,16 @@ constexpr std::size_t kMaxSemanticEncodedParagraphBytes =
     kMaxPayloadBytes - kSemanticResponseFixedBytes;
 constexpr std::size_t kMaxSemanticParagraphs =
     kMaxSemanticEncodedParagraphBytes / kSemanticParagraphLengthBytes;
+
+// Identity-module bytes include paragraph_count:u16. The process response adds
+// status + command + projection + revision before those module bytes.
+constexpr std::size_t kIdentityResponsePrefixBytes = 11;
+constexpr std::size_t kIdentityModuleEntryFixedBytes = 10;
+static_assert(kMaxPayloadBytes > kIdentityResponsePrefixBytes + 2);
+constexpr std::size_t kMaxIdentityModuleBytes =
+    kMaxPayloadBytes - kIdentityResponsePrefixBytes;
+constexpr std::size_t kMaxIdentityParagraphs =
+    (kMaxIdentityModuleBytes - 2) / kIdentityModuleEntryFixedBytes;
 constexpr std::size_t kMaxPrefixBytes = 256;
 
 struct Frame
@@ -305,12 +319,7 @@ std::vector<unsigned char> semanticSnapshot(
         kMaxSemanticParagraphs,
         kMaxSemanticEncodedParagraphBytes);
     if (snapshot.status == r0a::SemanticReadStatus::LimitExceeded)
-    {
-        return errorPayload(
-            kStatusLimitExceeded,
-            kCommandSemanticSnapshot,
-            snapshot.error);
-    }
+        return errorPayload(kStatusLimitExceeded, kCommandSemanticSnapshot, snapshot.error);
     if (snapshot.status == r0a::SemanticReadStatus::Error)
         return errorPayload(kStatusEngineState, kCommandSemanticSnapshot, snapshot.error);
 
@@ -344,6 +353,52 @@ std::vector<unsigned char> semanticSnapshot(
     return response;
 }
 
+std::vector<unsigned char> identityProbeSnapshot(
+    r0a::WriterSemanticView* semanticView,
+    std::uint64_t documentRevision)
+{
+    if (semanticView == nullptr)
+        return errorPayload(kStatusEngineState, kCommandIdentityProbeSnapshot, "no Writer document is open");
+
+    const r0a::IdentityProbeSnapshot snapshot = semanticView->identityProbeParagraphs(
+        kMaxIdentityParagraphs,
+        kMaxIdentityModuleBytes);
+    if (snapshot.status == r0a::SemanticReadStatus::LimitExceeded)
+        return errorPayload(kStatusLimitExceeded, kCommandIdentityProbeSnapshot, snapshot.error);
+    if (snapshot.status == r0a::SemanticReadStatus::Error)
+        return errorPayload(kStatusEngineState, kCommandIdentityProbeSnapshot, snapshot.error);
+    if (snapshot.paragraphs.size() > 0xffffU)
+        return errorPayload(kStatusLimitExceeded, kCommandIdentityProbeSnapshot, "too many identity-probe paragraphs");
+
+    std::vector<unsigned char> response{
+        kStatusOk,
+        kCommandIdentityProbeSnapshot,
+        kIdentityProbeProjectionVersion,
+    };
+    appendU64(response, documentRevision);
+    appendU16(response, static_cast<std::uint16_t>(snapshot.paragraphs.size()));
+
+    for (const r0a::IdentityProbeParagraph& paragraph : snapshot.paragraphs)
+    {
+        constexpr std::size_t kEntryFixedBytes = 10;
+        if (paragraph.probeToken == 0 || paragraph.text.size() > 0xffffU
+            || response.size() > kMaxPayloadBytes
+            || kEntryFixedBytes > kMaxPayloadBytes - response.size()
+            || paragraph.text.size() > kMaxPayloadBytes - response.size() - kEntryFixedBytes)
+        {
+            return errorPayload(
+                kStatusLimitExceeded,
+                kCommandIdentityProbeSnapshot,
+                "identity-probe snapshot exceeds R0A payload bound");
+        }
+
+        appendU64(response, paragraph.probeToken);
+        appendU16(response, static_cast<std::uint16_t>(paragraph.text.size()));
+        response.insert(response.end(), paragraph.text.begin(), paragraph.text.end());
+    }
+    return response;
+}
+
 std::vector<unsigned char> insertPrefix(
     lok::Document* document,
     std::uint64_t& documentRevision,
@@ -368,17 +423,53 @@ std::vector<unsigned char> insertPrefix(
     return {kStatusOk, kCommandInsertPrefix};
 }
 
+std::vector<unsigned char> splitFirstParagraph(
+    r0a::WriterSemanticView* semanticView,
+    std::uint64_t& documentRevision,
+    const std::vector<unsigned char>& request)
+{
+    if (semanticView == nullptr)
+        return errorPayload(kStatusEngineState, kCommandSplitFirstParagraph, "no Writer document is open");
+    if (request.size() != 3)
+        return errorPayload(kStatusInvalidRequest, kCommandSplitFirstParagraph, "invalid split-probe request");
+    if (documentRevision == std::numeric_limits<std::uint64_t>::max())
+        return errorPayload(kStatusEngineState, kCommandSplitFirstParagraph, "document revision exhausted");
+
+    const std::uint16_t characterOffset = readU16(request.data() + 1);
+    std::string error;
+    if (!semanticView->splitFirstParagraph(characterOffset, error))
+        return errorPayload(kStatusEngineState, kCommandSplitFirstParagraph, error);
+
+    ++documentRevision;
+    return {kStatusOk, kCommandSplitFirstParagraph};
+}
+
+std::vector<unsigned char> mergeFirstTwoParagraphs(
+    r0a::WriterSemanticView* semanticView,
+    std::uint64_t& documentRevision,
+    const std::vector<unsigned char>& request)
+{
+    if (semanticView == nullptr)
+        return errorPayload(kStatusEngineState, kCommandMergeFirstTwoParagraphs, "no Writer document is open");
+    if (request.size() != 1)
+        return errorPayload(kStatusInvalidRequest, kCommandMergeFirstTwoParagraphs, "invalid merge-probe request");
+    if (documentRevision == std::numeric_limits<std::uint64_t>::max())
+        return errorPayload(kStatusEngineState, kCommandMergeFirstTwoParagraphs, "document revision exhausted");
+
+    std::string error;
+    if (!semanticView->mergeFirstTwoParagraphs(error))
+        return errorPayload(kStatusEngineState, kCommandMergeFirstTwoParagraphs, error);
+
+    ++documentRevision;
+    return {kStatusOk, kCommandMergeFirstTwoParagraphs};
+}
+
 [[noreturn]] void retireNativeProcess(
     int status,
     std::unique_ptr<r0a::WriterSemanticView>& semanticView,
     std::unique_ptr<lok::Document>& document,
     std::unique_ptr<lok::Office>& office)
 {
-    // The pinned 24.2 internal semantic bridge has been qualified to release its
-    // view/module cleanly, followed by clean Document and Office destruction.
-    // LibreOffice then faults later in process-wide static finalization. Because
-    // the heavyweight engine is already an isolated worker, let the OS reclaim
-    // only those process-global statics after all owned native objects are gone.
     semanticView.reset();
     document.reset();
     office.reset();
@@ -475,6 +566,18 @@ int main(int argc, char* argv[])
                     break;
                 case kCommandInsertPrefix:
                     response = insertPrefix(document.get(), documentRevision, frame.payload);
+                    break;
+                case kCommandIdentityProbeSnapshot:
+                    if (frame.payload.size() != 1)
+                        response = errorPayload(kStatusInvalidRequest, command, "invalid identity-probe request");
+                    else
+                        response = identityProbeSnapshot(semanticView.get(), documentRevision);
+                    break;
+                case kCommandSplitFirstParagraph:
+                    response = splitFirstParagraph(semanticView.get(), documentRevision, frame.payload);
+                    break;
+                case kCommandMergeFirstTwoParagraphs:
+                    response = mergeFirstTwoParagraphs(semanticView.get(), documentRevision, frame.payload);
                     break;
                 default:
                     response = errorPayload(kStatusInvalidRequest, command, "unknown R0A command");
