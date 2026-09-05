@@ -18,7 +18,9 @@ pub enum ObservationFreshnessError {
 impl fmt::Display for ObservationFreshnessError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoOpenDocument => formatter.write_str("no authoritative document revision is open"),
+            Self::NoOpenDocument => {
+                formatter.write_str("no authoritative document revision is open")
+            }
             Self::Stale { observed, current } => write!(
                 formatter,
                 "semantic observation is stale: observed revision {observed}, current revision {current}"
