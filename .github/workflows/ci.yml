@@ -104,9 +104,9 @@ jobs:
           set -o pipefail
           # UNO SDK headers require the Unix platform contract explicitly when this
           # version-pinned semantic TU is compiled without a LibreOfficeKit header.
-          # Ubuntu's no-GUI LibreOffice build merges comphelper into libmergedlo.so;
-          # link the library actually supplied by libreoffice-core-nogui rather than
-          # depending on the full GUI-oriented libreoffice-core package for libcomphelper.
+          # The semantic TU resolves its pinned comphelper entry point from the
+          # libmergedlo instance already owned by LibreOfficeKit; do not make the
+          # adapter executable itself an owner of that process-global runtime.
           g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
             -DSAL_UNX \
             -I/usr/include/libreoffice \
@@ -118,7 +118,6 @@ jobs:
             -L/usr/lib/libreoffice/sdk/lib \
             -Wl,-rpath,/usr/lib/libreoffice/program \
             -Wl,-rpath,/usr/lib/libreoffice/sdk/lib \
-            -lmergedlo \
             -luno_cppuhelpergcc3 \
             -luno_cppu \
             -luno_salhelpergcc3 \
