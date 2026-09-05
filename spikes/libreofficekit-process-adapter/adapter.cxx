@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -366,6 +367,23 @@ std::vector<unsigned char> insertPrefix(
     ++documentRevision;
     return {kStatusOk, kCommandInsertPrefix};
 }
+
+[[noreturn]] void retireNativeProcess(
+    int status,
+    std::unique_ptr<r0a::WriterSemanticView>& semanticView,
+    std::unique_ptr<lok::Document>& document,
+    std::unique_ptr<lok::Office>& office)
+{
+    // The pinned 24.2 internal semantic bridge has been qualified to release its
+    // view/module cleanly, followed by clean Document and Office destruction.
+    // LibreOffice then faults later in process-wide static finalization. Because
+    // the heavyweight engine is already an isolated worker, let the OS reclaim
+    // only those process-global statics after all owned native objects are gone.
+    semanticView.reset();
+    document.reset();
+    office.reset();
+    std::_Exit(status);
+}
 } // namespace
 
 int main(int argc, char* argv[])
@@ -376,33 +394,34 @@ int main(int argc, char* argv[])
         return 2;
     }
 
+    std::unique_ptr<lok::Office> office;
+    std::unique_ptr<lok::Document> document;
+    std::unique_ptr<r0a::WriterSemanticView> semanticView;
     try
     {
-        std::unique_ptr<lok::Office> office(lok::lok_cpp_init(argv[1], argv[2]));
+        office.reset(lok::lok_cpp_init(argv[1], argv[2]));
         if (!office)
         {
             std::cerr << "native_adapter_init_error=could_not_initialise_libreofficekit\n";
             return 3;
         }
 
-        std::unique_ptr<lok::Document> document;
-        std::unique_ptr<r0a::WriterSemanticView> semanticView;
         std::uint64_t documentRevision = 0;
         for (;;)
         {
             Frame frame;
             const ReadFrameResult result = readFrame(frame);
             if (result == ReadFrameResult::CleanEof)
-                return 0;
+                retireNativeProcess(0, semanticView, document, office);
             if (result == ReadFrameResult::Error)
-                return 4;
+                retireNativeProcess(4, semanticView, document, office);
 
             if (frame.payload.empty())
             {
                 if (!writeFrame(
                         frame.requestId,
                         errorPayload(kStatusInvalidRequest, 0, "empty command")))
-                    return 5;
+                    retireNativeProcess(5, semanticView, document, office);
                 continue;
             }
 
@@ -463,14 +482,16 @@ int main(int argc, char* argv[])
             }
 
             if (!writeFrame(frame.requestId, response))
-                return 5;
+                retireNativeProcess(5, semanticView, document, office);
             if (shutdown)
-                return 0;
+                retireNativeProcess(0, semanticView, document, office);
         }
     }
     catch (const std::exception& error)
     {
         std::cerr << "native_adapter_exception=" << error.what() << '\n';
+        if (office)
+            retireNativeProcess(6, semanticView, document, office);
         return 6;
     }
 }
