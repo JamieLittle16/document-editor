@@ -99,32 +99,39 @@ jobs:
             -O/tmp/document-editor-uno-generated \
             /usr/lib/libreoffice/program/types.rdb \
             /usr/lib/libreoffice/program/types/offapi.rdb
-      - name: Build LibreOfficeKit native process adapter
+      - name: Build unloadable Writer semantic module and LibreOfficeKit adapter
         run: |
           set -o pipefail
-          # UNO SDK headers require the Unix platform contract explicitly when this
-          # version-pinned semantic TU is compiled without a LibreOfficeKit header.
-          # The semantic TU resolves its pinned comphelper entry point from the
-          # libmergedlo instance already owned by LibreOfficeKit; do not make the
-          # adapter executable itself an owner of that process-global runtime.
-          g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
-            -DSAL_UNX \
-            -I/usr/include/libreoffice \
-            -I/usr/include/x86_64-linux-gnu/libreoffice \
-            -I/tmp/document-editor-uno-generated \
-            spikes/libreofficekit-process-adapter/adapter.cxx \
-            spikes/libreofficekit-process-adapter/writer_semantics_24_2.cxx \
-            -L/usr/lib/libreoffice/program \
-            -L/usr/lib/libreoffice/sdk/lib \
-            -Wl,-rpath,/usr/lib/libreoffice/program \
-            -Wl,-rpath,/usr/lib/libreoffice/sdk/lib \
-            -luno_cppuhelpergcc3 \
-            -luno_cppu \
-            -luno_salhelpergcc3 \
-            -luno_sal \
-            -ldl \
-            -o /tmp/document-editor-lok-process-adapter \
-            2>&1 | tee /tmp/document-editor-native-build.log
+          # The version-pinned semantic compatibility module owns every UNO and
+          # libmergedlo dependency. It is dlopen'd only after LibreOfficeKit starts
+          # and dlclose'd with the document semantic view before LOK teardown.
+          {
+            g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -fPIC -shared \
+              -DSAL_UNX \
+              -I/usr/include/libreoffice \
+              -I/usr/include/x86_64-linux-gnu/libreoffice \
+              -I/tmp/document-editor-uno-generated \
+              spikes/libreofficekit-process-adapter/writer_semantics_24_2.cxx \
+              -L/usr/lib/libreoffice/program \
+              -L/usr/lib/libreoffice/sdk/lib \
+              -Wl,-rpath,/usr/lib/libreoffice/program \
+              -Wl,-rpath,/usr/lib/libreoffice/sdk/lib \
+              -Wl,-z,defs \
+              -lmergedlo \
+              -luno_cppuhelpergcc3 \
+              -luno_cppu \
+              -luno_salhelpergcc3 \
+              -luno_sal \
+              -ldl \
+              -o /tmp/libdocument-editor-writer-semantics-24-2.so
+
+            g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
+              -I/usr/include/libreoffice \
+              spikes/libreofficekit-process-adapter/adapter.cxx \
+              spikes/libreofficekit-process-adapter/writer_semantics_proxy.cxx \
+              -ldl \
+              -o /tmp/document-editor-lok-process-adapter
+          } 2>&1 | tee /tmp/document-editor-native-build.log
       - name: Retain native adapter compiler diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -135,7 +142,8 @@ jobs:
           retention-days: 7
       - name: Qualify real-engine lifecycle and same-instance semantics
         run: |
-          python3 spikes/libreofficekit-process-adapter/process_harness.py \
-            /tmp/document-editor-lok-process-adapter \
-            /usr/lib/libreoffice/program \
-            /tmp/document-editor-lok-input.docx
+          R0A_WRITER_SEMANTICS_MODULE=/tmp/libdocument-editor-writer-semantics-24-2.so \
+            python3 spikes/libreofficekit-process-adapter/process_harness.py \
+              /tmp/document-editor-lok-process-adapter \
+              /usr/lib/libreoffice/program \
+              /tmp/document-editor-lok-input.docx
