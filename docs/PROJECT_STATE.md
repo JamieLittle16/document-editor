@@ -6,7 +6,9 @@ Last updated: 2026-09-05
 
 **R0A — architecture/contracts and high-risk spikes.**
 
-The modular feature kernel, bounded worker/process foundation, semantic-observation freshness contract and pinned LibreOffice same-authority semantic/lifecycle qualification are now established. The next high-risk frontier is **semantic identity/reconciliation under structural edits**, beginning with paragraph split and merge, before durable history anchors or recovery semantics are frozen.
+The modular feature kernel, bounded worker/process foundation, semantic-observation freshness contract, pinned LibreOffice same-authority semantic/lifecycle qualification, and first structural identity experiment are now established.
+
+The split/merge experiment proved that live Writer object identity is useful continuity evidence but is **not durable logical identity**: a semantic split→merge round trip can restore the original paragraph text while replacing the original Writer paragraph object. The next identity frontier is insertion/deletion, move/reorder, formatting-only edits, duplicate-text ambiguity and save/reload reconciliation before durable history anchors or recovery semantics are frozen.
 
 ## Accepted strategic decisions
 
@@ -39,7 +41,9 @@ The modular feature kernel, bounded worker/process foundation, semantic-observat
 - the version-specific semantic dependency is isolated in an unloadable compatibility module behind a native-neutral ABI/proxy;
 - live semantic observations crossing the process boundary are bounded, normalized and implementation-neutral rather than serialized UNO objects;
 - production adoption of a LibreOffice-internal semantic bridge requires explicit versioning and an ADR rather than a project-wide wrapper grown from a spike;
-- the isolated native worker is the bootstrap-engine runtime-reclamation boundary when pinned engine global finalizers are empirically unsafe, but Office-owned semantic/document/LOK objects must still be explicitly destroyed first.
+- the isolated native worker is the bootstrap-engine runtime-reclamation boundary when pinned engine global finalizers are empirically unsafe, but Office-owned semantic/document/LOK objects must still be explicitly destroyed first;
+- Writer UNO same-object identity may be consumed as local reconciliation evidence, but must not define product `ParagraphId`, durable history identity or persistence identity;
+- semantic equivalence and bootstrap-engine object identity are distinct dimensions: history/replay must remain logically stable even when equivalent edits yield different engine objects.
 
 ## Implemented in repository skeleton
 
@@ -145,9 +149,21 @@ The modular feature kernel, bounded worker/process foundation, semantic-observat
 - restart/reopen and semantic reacquisition after forced process death;
 - dedicated `SEMANTIC_IDENTITY_SPIKE.md` and `LIVE_SEMANTIC_REVISION_QUALIFICATION.md`.
 
+### Structural paragraph identity qualification
+
+- qualification-only identity-probe projection using view-local tokens assigned by UNO same-object equality;
+- probe-token uniqueness and repeatability asserted before structural evidence is interpreted;
+- deterministic first-paragraph split at character offset `8` with exact semantic and revision assertions;
+- deterministic merge of the first two paragraphs with exact semantic restoration and revision assertions;
+- twice-reproduced pinned split relation: original first object survives as the right fragment while a new left-fragment object is created;
+- twice-reproduced pinned merge relation: the left/new object survives while the right/original object is destroyed;
+- twice-reproduced direct `R0 -> R2` result showing the original first paragraph object is gone even though its exact text is restored;
+- CI contract pins structural relations without pinning numeric probe tokens or addresses;
+- `STRUCTURAL_IDENTITY_QUALIFICATION.md` records the evidence and its history/reconciliation consequence.
+
 ### Version-pinned semantic module and native reclamation
 
-- `writer_semantics_24_2.cxx` is now an unloadable version-pinned compatibility module containing UNO/internal LibreOffice dependencies;
+- `writer_semantics_24_2.cxx` is an unloadable version-pinned compatibility module containing UNO/internal LibreOffice dependencies;
 - `writer_semantics_module_abi.hxx` defines a tiny qualification-only C ABI with no UNO types;
 - `writer_semantics_proxy.cxx` owns module loading, ABI validation, semantic-view release and bounded native-neutral decoding;
 - the adapter executable itself does not link UNO or `libmergedlo`;
@@ -200,8 +216,14 @@ private LibreOffice profile: OK
 typed missing-document load failure: OK
 invalid command without worker death: OK
 same-instance semantic module acquisition: OK
-semantic revision R0 before mutation: OK
-semantic revision R1 after successful mutation: OK
+semantic revision R0 before ordinary mutation: OK
+semantic revision R1 after successful ordinary mutation: OK
+identity probe repeatability without mutation: OK
+structural split revision R0 -> R1: OK
+structural merge revision R1 -> R2: OK
+split semantic projection: OK
+merge semantic restoration: OK
+pinned split/merge identity relations: OK
 semantic size-limit rejection without worker death: OK
 semantic module/view removal on close: OK
 graceful command shutdown + status 0 + clean EOF: OK
@@ -243,23 +265,36 @@ semantic access after close: rejected
 fresh process restart/reopen: fresh R0 snapshot reacquired
 ```
 
-This proves same-authority bounded semantic observation plus explicit freshness. It still does **not** prove stable paragraph/object identity.
+The structural identity path further qualifies:
+
+```text
+representative R0 tokens: (1, 2, 3)
+representative R1 split tokens: (4, 1, 2, 3)
+representative R2 merge tokens: (4, 2, 3)
+
+pinned R0 -> R1 relation: 0->1;1->2;2->3
+pinned R1 -> R2 relation: 0->0;1->-;2->1;3->2
+pinned R0 -> R2 relation: 0->-;1->1;2->2
+```
+
+Numeric tokens are diagnostic only. The pinned relation proves that semantic restoration does not imply restoration of Writer object identity.
 
 ## Immediate next engineering spikes
 
-1. Using the retained same-instance semantic authority, qualify deterministic **paragraph split and merge** and measure identity-survival/reconciliation signals without freezing a product `ParagraphId`.
-2. Extend the structural sequence to insertion/deletion around retained paragraphs, move/reorder and formatting-only edits.
-3. Determine which engine-side signals are useful reconciliation evidence and which must be ignored.
-4. Requalify semantic identity/reconciliation across **save/reload** separately from live-instance behaviour.
-5. Exercise LibreOfficeKit callbacks/invalidation and map ordering, threading and coalescing behaviour.
-6. Relate callbacks/invalidation to semantic revisions so host caches can be invalidated safely.
-7. Measure tile/render payload patterns to decide copy/shared-memory and batching thresholds.
-8. Build the first compatibility fixture runner around normalized semantic assertions rather than binary-package equality.
-9. Run UI framework qualification (Slint remains a leading candidate; selection must remain evidence-driven).
-10. Add generated/property tests for larger feature graphs before external plugin loading work begins.
-11. Define additive contribution registries only when the first real product feature needs them; do not invent a generic callback bus.
-12. Write the production native-adapter/supervisor/unsafe-boundary ADR only after structural identity and callback measurements constrain the design.
-13. Design durable history anchors, restart reconciliation and document-session recovery only after the structural identity evidence exists.
+1. Extend structural identity qualification to insertion/deletion adjacent to retained paragraphs.
+2. Qualify move/reorder while preserving distinct semantic content and neighbourhood evidence.
+3. Qualify formatting-only edits and determine whether paragraph object continuity changes when text/structure do not.
+4. Add duplicate-text fixtures so reconciliation cannot accidentally depend on content equality.
+5. Requalify semantic identity/reconciliation across **save/reload** and worker restart separately from live-instance behaviour.
+6. Exercise LibreOfficeKit callbacks/invalidation and map ordering, threading and coalescing behaviour.
+7. Relate callbacks/invalidation to semantic revisions so host caches can be invalidated safely.
+8. Measure tile/render payload patterns to decide copy/shared-memory and batching thresholds.
+9. Build the first compatibility fixture runner around normalized semantic assertions rather than binary-package equality.
+10. Run UI framework qualification (Slint remains a leading candidate; selection must remain evidence-driven).
+11. Add generated/property tests for larger feature graphs before external plugin loading work begins.
+12. Define additive contribution registries only when the first real product feature needs them; do not invent a generic callback bus.
+13. Write the production native-adapter/supervisor/unsafe-boundary ADR only after the remaining identity and callback measurements constrain the design.
+14. Design durable history anchors, restart reconciliation and document-session recovery only after the structural identity/reload evidence is sufficient to define product-owned identity semantics.
 
 ## Explicitly not started / deliberately unfrozen
 
@@ -296,22 +331,24 @@ Stock LibreOfficeKit is qualified headlessly for Writer loading, layout, tile re
 
 Public view/accessibility APIs are not accepted as whole-document semantic authority. The pinned deeper bridge can reach the exact Writer document already owned by LOK, observe unsaved state and return bounded normalized semantics with revision freshness.
 
-The internal ABI is version-specific and now quarantined behind an unloadable compatibility module. The process worker owns bootstrap-runtime containment, including the measured process-global-finalizer reclamation rule for LibreOffice 24.2.
+The internal ABI is version-specific and quarantined behind an unloadable compatibility module. The process worker owns bootstrap-runtime containment, including the measured process-global-finalizer reclamation rule for LibreOffice 24.2.
 
-The production native adapter remains deliberately unfrozen while **structural identity/reconciliation, callback behaviour and production versioning/supervisor policy** are still being measured.
+Live Writer paragraph object continuity is now measured through split/merge. It is useful reconciliation evidence but explicitly not product identity because a semantic round trip can replace an engine object.
+
+The production native adapter remains deliberately unfrozen while **remaining identity/reconciliation sequences, callback behaviour and production versioning/supervisor policy** are still being measured.
 
 ## Current protocol boundary
 
 Request IDs, revisions and temporary text offsets use fixed-width integers. Transactions validate range/resource invariants before mutation.
 
-`TextOffset` remains a narrow bootstrap value, not the future history/comment/collaboration anchor. Failed `w14` identity experiments and successful internal UNO access both reinforce the same rule: incidental file-format or engine identities do not become product semantic authority by convenience.
+`TextOffset` remains a narrow bootstrap value, not the future history/comment/collaboration anchor. Failed `w14` identity experiments, successful same-authority UNO access and non-invertible split/merge object identity all reinforce the same rule: incidental file-format or engine identities do not become product semantic authority by convenience.
 
-`SemanticObservation<T>` and `DocumentRevision` are product-facing freshness concepts. The current native semantic projection/version bytes are qualification codec, not a frozen schema.
+`SemanticObservation<T>` and `DocumentRevision` are product-facing freshness concepts. The current native semantic/identity projections and version bytes are qualification codec, not a frozen schema.
 
 ## Current transport boundary
 
 `document-transport` owns bounded stream framing for opaque control bytes only. It proves request correlation, framing-version checks, payload admission, short-read/write behaviour and precise EOF/truncation semantics without selecting the final message serializer or shared-memory policy.
 
-The frame concept is exercised across both the Cargo-built mock worker and native LibreOffice process. The native adapter additionally proves that bounded revision-stamped semantic bytes cross that seam without leaking engine implementation types.
+The frame concept is exercised across both the Cargo-built mock worker and native LibreOffice process. The native adapter additionally proves that bounded revision-stamped semantic bytes and qualification-only identity evidence can cross that seam without leaking engine implementation types.
 
-The next boundary to qualify is **semantic identity/reconciliation under structural change**, not another transport or acquisition mechanism.
+The next boundary to qualify is **reconciliation under broader structural change and reload**, not another transport or acquisition mechanism.
