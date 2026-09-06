@@ -74,11 +74,11 @@ Remaining implementation/tuning moves to R0B:
 
 Status: **qualified**.
 
-## R0A.7 Semantic projection and reconciliation evidence
+## R0A.7 Semantic projection, reconciliation evidence and durable paragraph anchors
 
-**Outcome:** obtain bounded live semantics with explicit authority/revision freshness, then qualify enough structural identity behaviour to avoid freezing engine-native IDs into permanent history anchors.
+**Outcome:** obtain bounded live semantics with explicit authority/revision freshness, qualify structural identity behavior, and define the smallest engine-independent durable paragraph identity model justified by that evidence.
 
-Status: **substantially qualified; permanent logical anchor/reconciliation schema intentionally not frozen yet**.
+Status: **qualified for the first product-owned durable paragraph-anchor model**.
 
 ### Qualified evidence
 
@@ -105,15 +105,27 @@ Status: **substantially qualified; permanent logical anchor/reconciliation schem
 - same live Writer object is therefore strong positive continuity evidence only inside one retained authority; inequality, content equality and naked token equality are all non-decisive for durable identity;
 - a public-UNO Writer move/reorder qualification was attempted and explicitly closed after the pinned headless environment kept `.uno:MoveDown` disabled even with verified numbering-rule setup; private-symbol hacks are not accepted as architecture evidence;
 - the internal 24.2 bridge remains isolated behind a native-neutral proxy/module ABI;
-- command shutdown and clean stdin EOF both qualify deterministic status-0 retirement after a live semantic session.
+- command shutdown and clean stdin EOF both qualify deterministic status-0 retirement after a live semantic session;
+- `document-anchors` now owns durable `DocumentLineageId + ParagraphAnchorSequence` identities with **zero internal repository dependencies**;
+- duplicate paragraph text receives distinct product anchors; semantic text remains reconciliation evidence rather than an identity key;
+- the product structural policy is explicit: ordinary paragraph mutation preserves identity, insertion mints, deletion retires, split preserves the left anchor and mints the right, merge preserves the left and retires the right;
+- the product split/merge rule deliberately does not mirror Writer object-survival behavior;
+- retired anchor sequences are never reused, including after persisted snapshot reload;
+- `ParagraphAnchorSnapshot` is a fixed-width, versioned, bounded durable artifact with explicit paragraph/per-paragraph/total semantic-byte admission limits;
+- an explicit filesystem checkpoint write/read round trip preserves product lineage and paragraph anchors for the exact saved semantic projection;
+- same-lineage exact rebind refuses reordered, externally changed or foreign-lineage projections rather than searching by text or guessing;
+- ADR-0013 and `DURABLE_PARAGRAPH_ANCHORS.md` record the product-owned identity contract.
 
-### Remaining acceptance
+R0A therefore freezes **ownership and the minimal paragraph identity key**, not every future reconciliation/history representation.
 
-1. Define the smallest **product-owned logical anchor/reconciliation evidence model** justified by the structural measurements above, without mirroring UNO or content hashes.
-2. Exercise durable anchor/reconciliation behavior across explicit save/reload/checkpoint artifacts; the authority/checkpoint lineage itself is now qualified and must remain independent of Writer object lifetime.
-3. Keep future history/recovery consumers dependent only on product-owned lineage/structure/semantic evidence and authority scope.
+Deferred evolution above this foundation:
+- richer structural/history-assisted reconciliation for independently modified external files;
+- semantic anchors below paragraph granularity;
+- persistent history DAG/commit representation;
+- structural command adapters for the complete editing command surface;
+- filesystem placement, atomic replacement and durability policy for production anchor/checkpoint artifacts.
 
-A permanent paragraph/history anchor must not serialize or depend on UNO references, probe tokens, file-format IDs or text equality as identity.
+None of those deferred items may reintroduce UNO references, probe tokens, file-format IDs or text equality as logical identity.
 
 ## R0A.8 Worker failure recovery
 
@@ -201,7 +213,7 @@ Remaining selection evidence:
 Do not begin broad R1 UI feature work until:
 
 - open/edit/render/save are proven through the intended boundaries;
-- structural semantic identity/reconciliation is understood enough to avoid freezing weak history anchors;
+- product-owned paragraph identity is independent of engine/file-format identity and conservative persisted rebind is proven;
 - application-level worker recovery/checkpoint semantics are proven;
 - render invalidations are safely sequenced beneath application authority;
 - the compatibility harness can enforce normalized preservation semantics;
