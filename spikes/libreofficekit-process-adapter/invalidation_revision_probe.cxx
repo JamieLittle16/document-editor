@@ -288,8 +288,13 @@ int main(int argc, char* argv[])
         const std::uint64_t beforeHash = paintHash(*document);
         document->registerCallback(&CallbackRecorder::callback, &recorder);
 
-        // Registration/rendering may emit initial view state. We care only about callbacks that
-        // overlap the verified edit below, so discard everything observed before the edit phase.
+        // Establish a deterministic insertion point before beginning the measured mutation. The
+        // command itself may produce view-state callbacks, so it remains part of baseline setup.
+        document->postUnoCommand(".uno:GoToStartOfDoc", nullptr, false);
+
+        // Registration, rendering and caret movement may emit initial view state. We care only
+        // about callbacks that overlap the verified edit below, so discard everything observed
+        // before the edit phase.
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
         recorder.clear();
         recorder.setHostRevision(0);
@@ -314,6 +319,7 @@ int main(int argc, char* argv[])
         const auto after = semanticView->paragraphs(kMaxParagraphs, kMaxSemanticBytes);
         if (!validParagraphSnapshot(after))
             finish(1, "post-edit semantic projection was invalid");
+        std::cout << "native_callback_after_paragraph_0=" << after.paragraphs[0] << '\n';
         if (after.paragraphs[0] != std::string(kEditMarker) + before.paragraphs[0])
             finish(1, "post-edit semantic projection did not contain the exact callback probe edit");
         if (after.paragraphs[1] != before.paragraphs[1]
