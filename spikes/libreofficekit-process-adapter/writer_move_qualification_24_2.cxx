@@ -1,42 +1,24 @@
 #include "writer_move_qualification_abi.hxx"
 #include "writer_semantics_module_abi.hxx"
 
-#include <com/sun/star/beans/PropertyValue.hpp>
 #include <com/sun/star/container/XEnumeration.hpp>
 #include <com/sun/star/container/XEnumerationAccess.hpp>
 #include <com/sun/star/frame/Desktop.hpp>
-#include <com/sun/star/frame/DispatchHelper.hpp>
-#include <com/sun/star/frame/FeatureStateEvent.hpp>
-#include <com/sun/star/frame/XDispatch.hpp>
-#include <com/sun/star/frame/XDispatchHelper.hpp>
-#include <com/sun/star/frame/XDispatchProvider.hpp>
-#include <com/sun/star/frame/XModel.hpp>
-#include <com/sun/star/frame/XStatusListener.hpp>
-#include <com/sun/star/lang/EventObject.hpp>
 #include <com/sun/star/lang/XComponent.hpp>
-#include <com/sun/star/lang/XEventListener.hpp>
-#include <com/sun/star/text/XParagraphCursor.hpp>
-#include <com/sun/star/text/XText.hpp>
+#include <com/sun/star/lang/XUnoTunnel.hpp>
 #include <com/sun/star/text/XTextDocument.hpp>
-#include <com/sun/star/text/XTextViewCursor.hpp>
-#include <com/sun/star/text/XTextViewCursorSupplier.hpp>
-#include <com/sun/star/uno/Any.hxx>
 #include <com/sun/star/uno/Exception.hpp>
 #include <com/sun/star/uno/Reference.hxx>
 #include <com/sun/star/uno/Sequence.hxx>
 #include <com/sun/star/uno/XComponentContext.hpp>
-#include <com/sun/star/uno/XInterface.hpp>
-#include <com/sun/star/util/URL.hpp>
-#include <com/sun/star/util/URLTransformer.hpp>
-#include <com/sun/star/util/XURLTransformer.hpp>
-#include <cppu/unotype.hxx>
 #include <rtl/string.hxx>
 #include <rtl/textenc.h>
 #include <rtl/ustring.hxx>
+#include <sal/types.h>
 
 #include <algorithm>
-#include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -51,10 +33,61 @@ namespace comphelper
 css::uno::Reference<css::uno::XComponentContext> getProcessComponentContext();
 }
 
+// ---------------------------------------------------------------------------
+// Pinned Writer 24.2 ABI surface
+// ---------------------------------------------------------------------------
+// These are deliberately declarations, not replicas of LibreOffice object
+// layouts. The qualification module never allocates, copies, dereferences
+// fields of, or exposes these types. It obtains the live SwXTextDocument via
+// Writer's XUnoTunnel and calls only exported methods. -Wl,-z,defs makes the
+// exact installed LibreOffice 24.2 library the authority for whether this ABI
+// surface exists.
+class SwDocShell;
+class SwEditShell;
+struct Tag_SwNodeOffset;
+
+namespace o3tl
+{
+template <typename Value, typename Tag>
+class strong_int
+{
+public:
+    explicit constexpr strong_int(Value value) noexcept
+        : value_(value)
+    {
+    }
+
+private:
+    Value value_;
+};
+} // namespace o3tl
+
+using SwNodeOffset = o3tl::strong_int<sal_Int32, Tag_SwNodeOffset>;
+
+class SwXTextDocument
+{
+public:
+    static const css::uno::Sequence<sal_Int8>& getUnoTunnelId();
+    SwDocShell* GetDocShell();
+};
+
+class SwDocShell
+{
+public:
+    SwEditShell* GetEditShell();
+};
+
+class SwEditShell
+{
+public:
+    bool MoveParagraph(SwNodeOffset offset);
+};
+
+static_assert(sizeof(SwNodeOffset) == sizeof(sal_Int32));
+static_assert(alignof(SwNodeOffset) == alignof(sal_Int32));
+
 namespace
 {
-constexpr const char* kExpectedFirstParagraph = "Document Editor LibreOfficeKit R0A probe";
-
 std::string utf8(const rtl::OUString& value)
 {
     const rtl::OString encoded = rtl::OUStringToOString(value, RTL_TEXTENCODING_UTF8);
@@ -117,122 +150,25 @@ css::uno::Reference<css::text::XTextDocument> currentWriterDocument(std::string&
     return found;
 }
 
-std::string paragraphAtViewCursor(
+SwXTextDocument* tunnelWriterImplementation(
     const css::uno::Reference<css::text::XTextDocument>& document,
-    const css::uno::Reference<css::frame::XModel>& model)
+    std::string& error)
 {
-    auto controller = model->getCurrentController();
-    css::uno::Reference<css::text::XTextViewCursorSupplier> supplier(
-        controller, css::uno::UNO_QUERY_THROW);
-    css::uno::Reference<css::text::XTextViewCursor> viewCursor(
-        supplier->getViewCursor(), css::uno::UNO_QUERY_THROW);
-
-    auto text = document->getText();
-    auto cursor = text->createTextCursorByRange(viewCursor->getStart());
-    css::uno::Reference<css::text::XParagraphCursor> paragraph(cursor, css::uno::UNO_QUERY_THROW);
-    paragraph->gotoStartOfParagraph(false);
-    paragraph->gotoEndOfParagraph(true);
-    return utf8(paragraph->getString());
-}
-
-void dispatchSynchronously(
-    const css::uno::Reference<css::frame::XDispatchHelper>& helper,
-    const css::uno::Reference<css::frame::XDispatchProvider>& provider,
-    const char* command)
-{
-    const css::uno::Sequence<css::beans::PropertyValue> arguments;
-    helper->executeDispatch(
-        provider,
-        rtl::OUString::createFromAscii(command),
-        rtl::OUString(),
-        0,
-        arguments);
-}
-
-// Qualification-only listener implemented directly against the generated UNO
-// interfaces. Ubuntu's LibreOffice 24.2 development packages intentionally do
-// not ship the source-tree cppuhelper/implbase.hxx convenience template, and
-// this probe should not acquire a private-header build dependency merely to
-// observe one Sfx dispatch state bit.
-class DispatchStateProbe final : public css::frame::XStatusListener
-{
-public:
-    css::uno::Any SAL_CALL queryInterface(const css::uno::Type& type) override
+    css::uno::Reference<css::lang::XUnoTunnel> tunnel(document, css::uno::UNO_QUERY);
+    if (!tunnel.is())
     {
-        if (type == cppu::UnoType<css::frame::XStatusListener>::get())
-        {
-            return css::uno::Any(
-                css::uno::Reference<css::frame::XStatusListener>(this));
-        }
-        if (type == cppu::UnoType<css::lang::XEventListener>::get())
-        {
-            return css::uno::Any(
-                css::uno::Reference<css::lang::XEventListener>(this));
-        }
-        if (type == cppu::UnoType<css::uno::XInterface>::get())
-        {
-            return css::uno::Any(
-                css::uno::Reference<css::uno::XInterface>(
-                    static_cast<css::frame::XStatusListener*>(this)));
-        }
-        return {};
+        error = "Writer XTextDocument does not expose XUnoTunnel";
+        return nullptr;
     }
 
-    void SAL_CALL acquire() noexcept override
+    const sal_Int64 raw = tunnel->getSomething(SwXTextDocument::getUnoTunnelId());
+    if (raw == 0)
     {
-        referenceCount_.fetch_add(1, std::memory_order_relaxed);
+        error = "Writer XUnoTunnel returned no SwXTextDocument implementation";
+        return nullptr;
     }
 
-    void SAL_CALL release() noexcept override
-    {
-        if (referenceCount_.fetch_sub(1, std::memory_order_acq_rel) == 1)
-            delete this;
-    }
-
-    void SAL_CALL statusChanged(const css::frame::FeatureStateEvent& event) override
-    {
-        received = true;
-        enabled = event.IsEnabled;
-    }
-
-    void SAL_CALL disposing(const css::lang::EventObject&) override {}
-
-    bool received = false;
-    bool enabled = false;
-
-private:
-    std::atomic<sal_Int32> referenceCount_{0};
-};
-
-struct DispatchState
-{
-    bool present = false;
-    bool received = false;
-    bool enabled = false;
-};
-
-DispatchState queryDispatchState(
-    const css::uno::Reference<css::frame::XDispatchProvider>& provider,
-    const css::uno::Reference<css::uno::XComponentContext>& context,
-    const char* command)
-{
-    css::uno::Reference<css::util::XURLTransformer> transformer(
-        css::util::URLTransformer::create(context), css::uno::UNO_SET_THROW);
-    css::util::URL url;
-    url.Complete = rtl::OUString::createFromAscii(command);
-    transformer->parseStrict(url);
-
-    css::uno::Reference<css::frame::XDispatch> dispatch(
-        provider->queryDispatch(url, rtl::OUString(), 0), css::uno::UNO_QUERY);
-    if (!dispatch.is())
-        return {};
-
-    auto* rawProbe = new DispatchStateProbe();
-    css::uno::Reference<css::frame::XStatusListener> probe(rawProbe);
-    dispatch->addStatusListener(probe, url);
-    const DispatchState state{true, rawProbe->received, rawProbe->enabled};
-    dispatch->removeStatusListener(probe, url);
-    return state;
+    return reinterpret_cast<SwXTextDocument*>(static_cast<std::intptr_t>(raw));
 }
 } // namespace
 
@@ -251,71 +187,38 @@ extern "C" int r0a_writer_semantics_move_first_paragraph_down(
             return r0a::kWriterSemanticStatusError;
         }
 
-        css::uno::Reference<css::frame::XModel> model(document, css::uno::UNO_QUERY_THROW);
-        auto controller = model->getCurrentController();
-        if (!controller.is())
+        SwXTextDocument* implementation = tunnelWriterImplementation(document, message);
+        if (implementation == nullptr)
         {
-            writeError(error, errorCapacity, "Writer model has no current controller");
+            writeError(error, errorCapacity, message);
             return r0a::kWriterSemanticStatusError;
         }
 
-        css::uno::Reference<css::frame::XDispatchProvider> dispatchProvider(
-            controller->getFrame(), css::uno::UNO_QUERY_THROW);
-        const auto context = comphelper::getProcessComponentContext();
-        if (!context.is())
+        SwDocShell* documentShell = implementation->GetDocShell();
+        if (documentShell == nullptr)
         {
-            writeError(error, errorCapacity, "LibreOffice process component context disappeared");
+            writeError(error, errorCapacity, "Writer implementation has no live SwDocShell");
             return r0a::kWriterSemanticStatusError;
         }
 
-        css::uno::Reference<css::frame::XDispatchHelper> dispatchHelper(
-            css::frame::DispatchHelper::create(context), css::uno::UNO_SET_THROW);
-
-        // Use the Writer shell itself to put the UI cursor at document start,
-        // then verify the semantic paragraph under that cursor before interpreting
-        // any move result.
-        dispatchSynchronously(dispatchHelper, dispatchProvider, ".uno:GoToStartOfDoc");
-
-        const std::string currentParagraph = paragraphAtViewCursor(document, model);
-        if (currentParagraph != kExpectedFirstParagraph)
+        SwEditShell* editShell = documentShell->GetEditShell();
+        if (editShell == nullptr)
         {
-            writeError(
-                error,
-                errorCapacity,
-                "Writer UI cursor did not reach deterministic P0 before move; observed paragraph: "
-                    + currentParagraph);
+            writeError(error, errorCapacity, "Writer SwDocShell has no live SwEditShell");
             return r0a::kWriterSemanticStatusError;
         }
 
-        // A disabled Sfx slot can still resolve to an XDispatch and turn a
-        // synchronous dispatch into a clean no-op. Observe the command's real
-        // frame state before invoking it so CI distinguishes command ineligibility
-        // from mutation semantics.
-        const DispatchState moveState = queryDispatchState(
-            dispatchProvider, context, ".uno:MoveDown");
-        if (!moveState.present)
+        // The probe has already established a fresh deterministic document and
+        // the first paragraph as the active paragraph. This calls Writer's real
+        // core operation, whose implementation delegates to SwDoc::MoveParagraph
+        // and reports whether the move occurred. The caller then independently
+        // requires exact P1,P0,P2 semantics before accepting the observation.
+        if (!editShell->MoveParagraph(SwNodeOffset(1)))
         {
-            writeError(error, errorCapacity, "Writer frame exposes no .uno:MoveDown dispatch");
-            return r0a::kWriterSemanticStatusError;
-        }
-        if (!moveState.received)
-        {
-            writeError(error, errorCapacity, "Writer .uno:MoveDown dispatch returned no status event");
-            return r0a::kWriterSemanticStatusError;
-        }
-        if (!moveState.enabled)
-        {
-            writeError(error, errorCapacity, "Writer .uno:MoveDown dispatch is disabled at verified P0");
+            writeError(error, errorCapacity, "Writer core MoveParagraph(+1) rejected verified P0");
             return r0a::kWriterSemanticStatusError;
         }
 
-        // DispatchHelper forces SynchronMode=true and waits for notification when
-        // supported. No VCL scheduler/event-loop pumping is used here.
-        dispatchSynchronously(dispatchHelper, dispatchProvider, ".uno:MoveDown");
-
-        // The caller deliberately verifies exact P1,P0,P2 semantics after this
-        // returns. Dispatch completion is never accepted as move evidence by
-        // itself.
         return r0a::kWriterSemanticStatusOk;
     }
     catch (const css::uno::Exception& exception)
