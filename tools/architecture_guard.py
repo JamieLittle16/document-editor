@@ -14,6 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 # R0A harness exceptions (notably desktop -> mock/session) are documented by their
 # presence here and should be removed as the production app-core path replaces them.
 ALLOWED_INTERNAL_DEPENDENCIES: dict[str, set[str]] = {
+    # Product-owned durable logical identity. This stays below application/history/session
+    # consumers and must not depend on engine, transport, UI or file-format crates.
+    "document-anchors": set(),
     "document-protocol": set(),
     "document-transport": {"document-protocol"},
     "document-engine-api": {"document-protocol"},
