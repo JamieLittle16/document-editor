@@ -7,13 +7,20 @@
 // This deliberately remains separate from writer_semantics_module_abi.hxx:
 // paragraph movement is currently an empirical identity experiment, not a
 // product engine operation and not part of the stable semantic-module ABI.
-// The function acts on the one authoritative Writer document already owned by
-// the LibreOfficeKit process and returns the same bounded status convention as
-// the base semantic module.
+// No native pointer, UNO reference or probe token crosses this boundary.
 namespace r0a
 {
+using WriterPrepareParagraphMoveContextFn = int (*)(char* error, std::size_t errorCapacity);
 using WriterMoveFirstParagraphDownFn = int (*)(char* error, std::size_t errorCapacity);
 } // namespace r0a
+
+// Prepare a Writer context in which its public MoveDown command deliberately
+// exercises the real paragraph-node move path. The identity baseline is taken
+// only after this preparation succeeds, so setup formatting is excluded from
+// the measured move relation.
+extern "C" int r0a_writer_semantics_prepare_paragraph_move_context(
+    char* error,
+    std::size_t errorCapacity);
 
 extern "C" int r0a_writer_semantics_move_first_paragraph_down(
     char* error,
