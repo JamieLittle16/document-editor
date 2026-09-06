@@ -39,17 +39,9 @@ namespace comphelper
 css::uno::Reference<css::uno::XComponentContext> getProcessComponentContext();
 }
 
-// The distro SDK intentionally omits VCL's private C++ headers. This module is
-// already version-pinned to LO 24.2, so bind the one VCL operation needed for
-// bounded event completion by its exported Itanium ABI symbol instead of
-// copying private headers into Office. `-Wl,-z,defs` makes this dependency an
-// explicit native-CI qualification. It never crosses the unloadable module ABI.
-extern "C" bool r0aApplicationReschedule(bool handleAllCurrentEvents)
-    __asm__("_ZN11Application10RescheduleEb");
-
 namespace
 {
-constexpr std::size_t kDispatchRescheduleBudget = 4;
+constexpr const char* kExpectedFirstParagraph = "Document Editor LibreOfficeKit R0A probe";
 
 std::string utf8(const rtl::OUString& value)
 {
@@ -113,19 +105,36 @@ css::uno::Reference<css::text::XTextDocument> currentWriterDocument(std::string&
     return found;
 }
 
-void completeDispatchEventsBoundedly()
+std::string paragraphAtViewCursor(
+    const css::uno::Reference<css::text::XTextDocument>& document,
+    const css::uno::Reference<css::frame::XModel>& model)
 {
-    // MacrosTest::dispatchCommand() uses Scheduler::ProcessEventsToIdle(), which
-    // repeatedly calls Application::Reschedule(true). In a headless LOK process
-    // the full idle loop can remain live indefinitely because unrelated idles
-    // keep regenerating. A paragraph move only needs the command's queued UI
-    // work to run, so process a small fixed number of "all current events"
-    // batches. The caller still proves completion semantically as P1,P0,P2.
-    for (std::size_t batch = 0; batch < kDispatchRescheduleBudget; ++batch)
-    {
-        if (!r0aApplicationReschedule(true))
-            break;
-    }
+    auto controller = model->getCurrentController();
+    css::uno::Reference<css::text::XTextViewCursorSupplier> supplier(
+        controller, css::uno::UNO_QUERY_THROW);
+    css::uno::Reference<css::text::XTextViewCursor> viewCursor(
+        supplier->getViewCursor(), css::uno::UNO_QUERY_THROW);
+
+    auto text = document->getText();
+    auto cursor = text->createTextCursorByRange(viewCursor->getStart());
+    css::uno::Reference<css::text::XParagraphCursor> paragraph(cursor, css::uno::UNO_QUERY_THROW);
+    paragraph->gotoStartOfParagraph(false);
+    paragraph->gotoEndOfParagraph(true);
+    return utf8(paragraph->getString());
+}
+
+void dispatchSynchronously(
+    const css::uno::Reference<css::frame::XDispatchHelper>& helper,
+    const css::uno::Reference<css::frame::XDispatchProvider>& provider,
+    const char* command)
+{
+    const css::uno::Sequence<css::beans::PropertyValue> arguments;
+    helper->executeDispatch(
+        provider,
+        rtl::OUString::createFromAscii(command),
+        rtl::OUString(),
+        0,
+        arguments);
 }
 } // namespace
 
@@ -146,10 +155,10 @@ extern "C" int r0a_writer_semantics_move_first_paragraph_down(
 
         // The published Text service lists XTextRangeMover as optional, but the
         // pinned Writer 24.2 SwXBodyText does not expose that interface. Writer's
-        // ordinary text shell does, however, implement `.uno:MoveDown` as
-        // SwWrtShell::MoveParagraph(). Drive that genuine Writer paragraph-move
-        // command on the same live authority rather than falling back to a
-        // delete/insert simulation.
+        // ordinary text shell does implement `.uno:MoveDown` as
+        // SwWrtShell::MoveParagraph(). Use Writer commands for both cursor
+        // placement and movement so the experiment measures that genuine shell
+        // operation rather than mixing a UNO text cursor with UI-shell state.
         css::uno::Reference<css::frame::XModel> model(document, css::uno::UNO_QUERY_THROW);
         auto controller = model->getCurrentController();
         if (!controller.is())
@@ -157,17 +166,6 @@ extern "C" int r0a_writer_semantics_move_first_paragraph_down(
             writeError(error, errorCapacity, "Writer model has no current controller");
             return r0a::kWriterSemanticStatusError;
         }
-
-        css::uno::Reference<css::text::XTextViewCursorSupplier> viewCursorSupplier(
-            controller, css::uno::UNO_QUERY_THROW);
-        css::uno::Reference<css::text::XTextViewCursor> viewCursor(
-            viewCursorSupplier->getViewCursor(), css::uno::UNO_QUERY_THROW);
-
-        auto text = document->getText();
-        css::uno::Reference<css::text::XParagraphCursor> firstParagraph(
-            text->createTextCursor(), css::uno::UNO_QUERY_THROW);
-        firstParagraph->gotoStart(false);
-        viewCursor->gotoRange(firstParagraph->getStart(), false);
 
         css::uno::Reference<css::frame::XDispatchProvider> dispatchProvider(
             controller->getFrame(), css::uno::UNO_QUERY_THROW);
@@ -180,19 +178,29 @@ extern "C" int r0a_writer_semantics_move_first_paragraph_down(
 
         css::uno::Reference<css::frame::XDispatchHelper> dispatchHelper(
             css::frame::DispatchHelper::create(context), css::uno::UNO_SET_THROW);
-        const css::uno::Sequence<css::beans::PropertyValue> arguments;
-        dispatchHelper->executeDispatch(
-            dispatchProvider,
-            rtl::OUString::createFromAscii(".uno:MoveDown"),
-            rtl::OUString(),
-            0,
-            arguments);
 
-        completeDispatchEventsBoundedly();
+        // DispatchHelper adds SynchronMode=true and waits for notification when
+        // the dispatch supports it. Do not touch Scheduler/Application here:
+        // event-loop completion is neither needed nor safe in this headless
+        // qualification process.
+        dispatchSynchronously(dispatchHelper, dispatchProvider, ".uno:GoToStartOfDoc");
+
+        const std::string currentParagraph = paragraphAtViewCursor(document, model);
+        if (currentParagraph != kExpectedFirstParagraph)
+        {
+            writeError(
+                error,
+                errorCapacity,
+                "Writer UI cursor did not reach deterministic P0 before move; observed paragraph: "
+                    + currentParagraph);
+            return r0a::kWriterSemanticStatusError;
+        }
+
+        dispatchSynchronously(dispatchHelper, dispatchProvider, ".uno:MoveDown");
 
         // The caller deliberately verifies exact P1,P0,P2 semantics after this
-        // returns. Dispatch plus event processing is never accepted as move
-        // evidence by itself.
+        // returns. Dispatch completion is never accepted as move evidence by
+        // itself.
         return r0a::kWriterSemanticStatusOk;
     }
     catch (const css::uno::Exception& exception)
