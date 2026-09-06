@@ -12,7 +12,7 @@ Recovery is an application-owned correctness concern. Engine process restartabil
 2. Atomic save staging.
 3. Application recovery journal of accepted operations.
 4. Periodic recoverable checkpoints.
-5. Session metadata/history index.
+5. Session metadata/history index, including product-owned logical-anchor metadata.
 
 The layers deliberately have different durability and lifetime policies. A checkpoint is not the user file, a journal record is not a Writer undo record, and an engine-local revision is not a persistent document identity.
 
@@ -99,6 +99,22 @@ The journal records *accepted intent*, not whatever happens to remain in one eng
 
 Current `DocumentTransaction` UTF-8 edit ranges are the R0A operation payload because text is the only implemented editing surface. They are not promoted into a universal durable semantic-anchor scheme. Future structural operations/history may change the replay payload while preserving the same accepted-operation ordering and authority provenance.
 
+## Durable logical anchors during recovery
+
+ADR-0013 separates durable logical identity from the live engine binding used to act on it:
+
+```text
+LogicalAnchorId = (HistoryLineageId, local anchor sequence)
+DurableLogicalAnchor<H> = (LogicalAnchorId, product reconciliation hint H)
+LiveAnchorBinding<T> = (LogicalAnchorId, SessionAuthorityStamp, transient target T)
+```
+
+Recovery may therefore replace every live authority-bound target while preserving the same product-owned anchor IDs. A restored document does **not** need Writer to recreate the same UNO objects, probe tokens, revision values or file-format IDs.
+
+Rebinding after authority replacement uses product evidence only: explicit accepted-operation lineage where available, otherwise normalized structural + semantic evidence. Same-engine-object continuity is a useful local signal only while the authority generation is unchanged and is rejected across recovery/reopen.
+
+The durable storage layer must eventually persist at least the history-lineage namespace, monotonic anchor-allocation cursor and whatever normalized hints/history records are needed for the supported semantic structures. It must not serialize `SessionAuthorityStamp`, UNO references, native probe tokens, content hashes or text offsets as the anchor identity.
+
 ## Recovery journal completeness
 
 A checkpoint records the last accepted-operation sequence already included in its payload. Recovery must receive the complete contiguous journal tail after that cursor.
@@ -142,9 +158,10 @@ The session manager should be able to:
 6. load the checkpoint into the replacement worker;
 7. replay recoverable accepted operations where the operation adapter proves replay is safe;
 8. verify resulting semantic/revision state;
-9. publish the new `AuthorityGeneration` only through successful restore;
-10. reject every stale async/render completion from the dead authority;
-11. notify the user only if recovery is incomplete.
+9. rebind durable logical anchors using product-owned reconciliation evidence;
+10. publish the new `AuthorityGeneration` only through successful restore;
+11. reject every stale async/render completion from the dead authority;
+12. notify the user only if recovery is incomplete or anchor reconciliation requires resolution.
 
 If checkpoint load fails, no replacement authority is published.
 
@@ -176,6 +193,7 @@ periodic checkpoint
     -> serialize checkpoint artifact
     -> validate/flush checkpoint
     -> persist checkpoint metadata including journal cursor
+    -> persist compatible history/anchor metadata required by that checkpoint lineage
     -> only then permit older covered journal segments to be reclaimed
 ```
 
@@ -189,7 +207,7 @@ External modification reconciliation is separate from worker-crash replay. A jou
 
 ## R0A status
 
-Qualified in Rust/session orchestration:
+Qualified in Rust/session/application orchestration:
 
 - non-forgeable authority stamps;
 - immediate authority withdrawal on engine replacement;
@@ -202,14 +220,19 @@ Qualified in Rust/session orchestration:
 - no authority on checkpoint-open failure;
 - no authority after partial replay failure;
 - old semantic and async work rejected through the same authority gate;
-- accepted-operation sequence continues monotonically after successful recovery.
+- accepted-operation sequence continues monotonically after successful recovery;
+- product-owned monotonic logical-anchor IDs independent of engine/file-format identity;
+- save/reload and checkpoint recovery preserve durable anchor IDs while replacing live authority bindings;
+- duplicate semantics and conflicting/insufficient reconciliation evidence remain explicit rather than guessed.
 
-Still intentionally unfrozen:
+Still intentionally unfrozen for R0B:
 
 - durable rich-document checkpoint encoding;
-- journal serialization/fsync policy;
-- persistent logical document identity across full application restart;
-- permanent semantic anchors for structural history/replay;
+- journal/anchor serialization and fsync policy;
+- production `HistoryLineageId` generation/encoding and save-as/fork policy;
+- persistent logical document/account identity across full application restart;
+- rich semantic reconciliation-hint schemas for paragraphs, tables, fields, comments and tracked changes;
+- user-facing policy for ambiguous/unresolved anchors;
 - external-file conflict merge semantics.
 
-See ADR-0012 for the normative recovery lineage decision.
+See ADR-0012 for the normative recovery lineage decision and ADR-0013 for the durable logical-anchor identity/binding decision.
