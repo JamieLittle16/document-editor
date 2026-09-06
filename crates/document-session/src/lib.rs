@@ -3,7 +3,7 @@
 use std::fmt;
 
 use document_engine_api::{DocumentEngine, EngineError, SemanticObservation};
-use document_protocol::{DocumentRevision, DocumentTransaction, TransactionApplied};
+use document_protocol::{DocumentRevision, DocumentTransaction};
 
 /// One application-owned incarnation of the authoritative document binding.
 ///
@@ -371,7 +371,7 @@ pub enum RecoveryReplayError {
 impl fmt::Display for RecoveryReplayError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Engine(error) => write!(formatter, "recovery engine failure: {error}"),
+            Self::Engine(error) => write!(formatter, "recovery engine failure: {error:?}"),
             Self::SequenceExhausted => formatter.write_str("accepted operation sequence exhausted"),
             Self::JournalGap { expected, actual } => write!(
                 formatter,
@@ -405,14 +405,7 @@ impl fmt::Display for RecoveryReplayError {
     }
 }
 
-impl std::error::Error for RecoveryReplayError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Engine(error) => Some(error),
-            _ => None,
-        }
-    }
-}
+impl std::error::Error for RecoveryReplayError {}
 
 impl From<EngineError> for RecoveryReplayError {
     fn from(error: EngineError) -> Self {
@@ -720,7 +713,7 @@ impl<E: DocumentEngine> DocumentSession<E> {
 mod tests {
     use document_protocol::{
         DocumentCapability, EngineCapabilities, ProtocolError, ProtocolVersion, TextEdit,
-        TextOffset, TransactionLimits,
+        TextOffset, TransactionApplied, TransactionLimits,
     };
 
     use super::*;
