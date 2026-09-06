@@ -76,9 +76,9 @@ Status: **qualified**.
 
 ## R0A.7 Semantic projection and reconciliation evidence
 
-**Outcome:** obtain bounded live semantics with explicit authority/revision freshness, then qualify enough structural identity behaviour to avoid freezing engine-native IDs into permanent history anchors.
+**Outcome:** obtain bounded live semantics with explicit authority/revision freshness, qualify structural identity behavior, and freeze the smallest product-owned durable-anchor model that does not inherit engine-native identity.
 
-Status: **substantially qualified; permanent logical anchor/reconciliation schema intentionally not frozen yet**.
+Status: **qualified for R0A; rich locator encoding and persistence policy remain R0B work**.
 
 ### Qualified evidence
 
@@ -105,15 +105,26 @@ Status: **substantially qualified; permanent logical anchor/reconciliation schem
 - same live Writer object is therefore strong positive continuity evidence only inside one retained authority; inequality, content equality and naked token equality are all non-decisive for durable identity;
 - a public-UNO Writer move/reorder qualification was attempted and explicitly closed after the pinned headless environment kept `.uno:MoveDown` disabled even with verified numbering-rule setup; private-symbol hacks are not accepted as architecture evidence;
 - the internal 24.2 bridge remains isolated behind a native-neutral proxy/module ABI;
-- command shutdown and clean stdin EOF both qualify deterministic status-0 retirement after a live semantic session.
+- command shutdown and clean stdin EOF both qualify deterministic status-0 retirement after a live semantic session;
+- `app-core::reconciliation` introduces product-owned `HistoryLineageId` plus monotonic `LogicalAnchorId` allocation independent of Writer, file-format identity and authority generations;
+- `DurableLogicalAnchor<H>` separates durable identity/product hints from ephemeral `LiveAnchorBinding<T>` values scoped to exact `SessionAuthorityStamp`;
+- same-engine-object continuity is accepted only within one `AuthorityGeneration` and is rejected across reopen/restart authority replacement;
+- semantic equality alone and structural similarity alone cannot rebind an anchor; a unique structural + semantic candidate may rebind when stronger evidence is unavailable;
+- explicit accepted-operation lineage outranks incidental structural/semantic similarity, while conflicting strong evidence remains `Ambiguous` rather than guessed;
+- duplicate semantic candidates remain `Ambiguous`, and insufficient evidence remains `Unresolved`;
+- save/reload and checkpoint recovery preserve the exact durable anchor ID while replacing the live authority binding;
+- ADR-0013 records the durable identity/binding/evidence separation as the normative R0A anchor contract.
 
-### Remaining acceptance
+### R0B implementation work
 
-1. Define the smallest **product-owned logical anchor/reconciliation evidence model** justified by the structural measurements above, without mirroring UNO or content hashes.
-2. Exercise durable anchor/reconciliation behavior across explicit save/reload/checkpoint artifacts; the authority/checkpoint lineage itself is now qualified and must remain independent of Writer object lifetime.
-3. Keep future history/recovery consumers dependent only on product-owned lineage/structure/semantic evidence and authority scope.
+- choose and persist a production `HistoryLineageId` generation/encoding strategy plus allocator cursor;
+- define save-as/copy/fork lineage policy;
+- bind `DurableLogicalAnchor<H>` to richer normalized paragraph/table/field/comment projections as those surfaces enter product work;
+- persist anchor hints/history records alongside checkpoint/journal artifacts without serializing native references or authority stamps as identity;
+- define user-facing repair/conflict policy for `Ambiguous` and `Unresolved` anchors;
+- emit explicit product lineage mappings from structured operations whenever logical continuation is known.
 
-A permanent paragraph/history anchor must not serialize or depend on UNO references, probe tokens, file-format IDs or text equality as identity.
+A permanent paragraph/history anchor must never serialize or depend on UNO references, probe tokens, file-format IDs, content hashes, text equality or text offsets as identity.
 
 ## R0A.8 Worker failure recovery
 
@@ -201,7 +212,7 @@ Remaining selection evidence:
 Do not begin broad R1 UI feature work until:
 
 - open/edit/render/save are proven through the intended boundaries;
-- structural semantic identity/reconciliation is understood enough to avoid freezing weak history anchors;
+- product-owned structural semantic identity/reconciliation is frozen without engine-native identity;
 - application-level worker recovery/checkpoint semantics are proven;
 - render invalidations are safely sequenced beneath application authority;
 - the compatibility harness can enforce normalized preservation semantics;
