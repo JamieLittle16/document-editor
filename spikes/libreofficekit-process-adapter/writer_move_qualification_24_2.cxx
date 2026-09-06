@@ -2,8 +2,11 @@
 #include "writer_semantics_module_abi.hxx"
 
 #include <com/sun/star/beans/PropertyValue.hpp>
+#include <com/sun/star/beans/XPropertySet.hpp>
 #include <com/sun/star/container/XEnumeration.hpp>
 #include <com/sun/star/container/XEnumerationAccess.hpp>
+#include <com/sun/star/container/XIndexAccess.hpp>
+#include <com/sun/star/container/XIndexReplace.hpp>
 #include <com/sun/star/frame/Desktop.hpp>
 #include <com/sun/star/frame/DispatchHelper.hpp>
 #include <com/sun/star/frame/FeatureStateEvent.hpp>
@@ -15,6 +18,7 @@
 #include <com/sun/star/lang/EventObject.hpp>
 #include <com/sun/star/lang/XComponent.hpp>
 #include <com/sun/star/lang/XEventListener.hpp>
+#include <com/sun/star/lang/XMultiServiceFactory.hpp>
 #include <com/sun/star/text/XParagraphCursor.hpp>
 #include <com/sun/star/text/XText.hpp>
 #include <com/sun/star/text/XTextDocument.hpp>
@@ -51,6 +55,7 @@ css::uno::Reference<css::uno::XComponentContext> getProcessComponentContext();
 namespace
 {
 constexpr const char* kExpectedFirstParagraph = "Document Editor LibreOfficeKit R0A probe";
+constexpr std::size_t kExpectedParagraphCount = 3;
 
 std::string utf8(const rtl::OUString& value)
 {
@@ -160,6 +165,57 @@ void dispatchSynchronously(const WriterAuthority& authority, const char* command
         arguments);
 }
 
+bool applyExplicitNumberingContext(const WriterAuthority& authority, std::string& error)
+{
+    // LibreOffice's own Writer UNO tests create NumberingRules from the document
+    // service factory and assign the resulting object to paragraph properties.
+    // Use that public API rather than relying on a headless UI toggle to create
+    // the context required by Writer's MoveDown slot.
+    css::uno::Reference<css::lang::XMultiServiceFactory> factory(
+        authority.document, css::uno::UNO_QUERY_THROW);
+    css::uno::Reference<css::container::XIndexReplace> numberingRules(
+        factory->createInstance(rtl::OUString::createFromAscii("com.sun.star.text.NumberingRules")),
+        css::uno::UNO_QUERY_THROW);
+
+    css::uno::Reference<css::container::XEnumerationAccess> paragraphs(
+        authority.document->getText(), css::uno::UNO_QUERY_THROW);
+    auto enumeration = paragraphs->createEnumeration();
+    std::size_t paragraphCount = 0;
+    while (enumeration->hasMoreElements())
+    {
+        css::uno::Any element = enumeration->nextElement();
+        css::uno::Reference<css::beans::XPropertySet> properties(element, css::uno::UNO_QUERY);
+        if (!properties.is())
+            continue;
+
+        properties->setPropertyValue(
+            rtl::OUString::createFromAscii("NumberingRules"), css::uno::Any(numberingRules));
+        properties->setPropertyValue(
+            rtl::OUString::createFromAscii("NumberingLevel"), css::uno::Any(sal_Int16(0)));
+
+        css::uno::Reference<css::container::XIndexAccess> readbackRules;
+        properties->getPropertyValue(rtl::OUString::createFromAscii("NumberingRules"))
+            >>= readbackRules;
+        sal_Int16 readbackLevel = -1;
+        properties->getPropertyValue(rtl::OUString::createFromAscii("NumberingLevel"))
+            >>= readbackLevel;
+        if (!readbackRules.is() || readbackRules->getCount() == 0 || readbackLevel != 0)
+        {
+            error = "Writer paragraph numbering-rule read-back did not confirm explicit list context";
+            return false;
+        }
+        ++paragraphCount;
+    }
+
+    if (paragraphCount != kExpectedParagraphCount)
+    {
+        error = "expected exactly three body paragraphs while preparing explicit numbering context; observed "
+                + std::to_string(paragraphCount);
+        return false;
+    }
+    return true;
+}
+
 class DispatchStateProbe final : public css::frame::XStatusListener
 {
 public:
@@ -246,7 +302,7 @@ bool requireMoveEnabled(const WriterAuthority& authority, std::string& error)
     }
     if (!state.enabled)
     {
-        error = "Writer .uno:MoveDown remains disabled after list-context preparation";
+        error = "Writer .uno:MoveDown remains disabled after verified public-UNO numbering context";
         return false;
     }
     return true;
@@ -278,14 +334,11 @@ extern "C" int r0a_writer_semantics_prepare_paragraph_move_context(
             return r0a::kWriterSemanticStatusError;
         }
 
-        // Writer intentionally disables its MoveDown slot for ordinary plain
-        // paragraphs even though the underlying implementation is the generic
-        // SwEditShell::MoveParagraph -> SwDoc::MoveParagraph path. Prepare an
-        // enabled, real Writer list context using the same commands exercised by
-        // LibreOffice's own Writer tests. Identity is measured only after this
-        // function returns, so this setup formatting is outside the move relation.
-        dispatchSynchronously(authority, ".uno:SelectAll");
-        dispatchSynchronously(authority, ".uno:DefaultBullet");
+        if (!applyExplicitNumberingContext(authority, message))
+        {
+            writeError(error, errorCapacity, message);
+            return r0a::kWriterSemanticStatusError;
+        }
         dispatchSynchronously(authority, ".uno:GoToStartOfDoc");
 
         const std::string currentParagraph = paragraphAtViewCursor(authority);
@@ -294,7 +347,7 @@ extern "C" int r0a_writer_semantics_prepare_paragraph_move_context(
             writeError(
                 error,
                 errorCapacity,
-                "Writer UI cursor did not reach deterministic P0 after list preparation; observed paragraph: "
+                "Writer UI cursor did not reach deterministic P0 after explicit numbering preparation; observed paragraph: "
                     + currentParagraph);
             return r0a::kWriterSemanticStatusError;
         }
@@ -355,9 +408,9 @@ extern "C" int r0a_writer_semantics_move_first_paragraph_down(
         }
 
         // This public Writer command reaches the same generic MoveParagraph path
-        // in the enabled list context. The caller requires exact P1,P0,P2 text
-        // and repeatable identity observations after return; dispatch completion
-        // alone is never accepted as move evidence.
+        // if Writer exposes it in the verified numbering context. The caller
+        // requires exact P1,P0,P2 text and repeatable identity observations after
+        // return; dispatch completion alone is never accepted as move evidence.
         dispatchSynchronously(authority, ".uno:MoveDown");
         return r0a::kWriterSemanticStatusOk;
     }
