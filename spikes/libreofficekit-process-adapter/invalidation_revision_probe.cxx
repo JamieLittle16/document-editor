@@ -14,7 +14,6 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
-#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -25,7 +24,6 @@ constexpr std::size_t kMaxParagraphs = 16;
 constexpr std::size_t kMaxSemanticBytes = 4096;
 constexpr int kCanvasWidth = 256;
 constexpr int kCanvasHeight = 256;
-constexpr char kEditMarker[] = "R0A_CALLBACK_EDIT_91C4";
 
 std::uint64_t fnv1a64(const std::vector<unsigned char>& bytes)
 {
@@ -288,45 +286,36 @@ int main(int argc, char* argv[])
         const std::uint64_t beforeHash = paintHash(*document);
         document->registerCallback(&CallbackRecorder::callback, &recorder);
 
-        // Establish a deterministic insertion point before beginning the measured mutation. The
-        // command itself may produce view-state callbacks, so it remains part of baseline setup.
-        document->postUnoCommand(".uno:GoToStartOfDoc", nullptr, false);
-
-        // Registration, rendering and caret movement may emit initial view state. We care only
-        // about callbacks that overlap the verified edit below, so discard everything observed
-        // before the edit phase.
+        // Registration/rendering may emit initial view state. We care only about callbacks that
+        // overlap the verified mutation below, so discard everything observed before that phase.
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
         recorder.clear();
         recorder.setHostRevision(0);
         recorder.setPhase(DeliveryPhase::MutationCall);
 
-        if (!document->paste(
-                "text/plain;charset=utf-8", kEditMarker, sizeof(kEditMarker) - 1U))
-        {
-            finish(1, "LibreOfficeKit paste mutation failed: " + takeError(*office));
-        }
+        // Use the already-qualified synchronous Writer mutation here instead of a queued caret or
+        // keyboard operation. The compatibility module writes ParaAdjust=CENTER and reads the
+        // property back before returning success, giving this callback experiment an unambiguous
+        // mutation-completion boundary without depending on an external LOK event loop.
+        std::string formatError;
+        if (!semanticView->centerFirstParagraph(formatError))
+            finish(1, "verified paragraph-format mutation failed: " + formatError);
 
         recorder.setPhase(DeliveryPhase::ReturnedBeforeRevision);
-        // Expose any callback implementation that delivers from another thread only after the LOK
-        // call returned. Production code must not contain this delay; it is qualification-only.
+        // Expose any callback implementation that delivers from another thread only after the
+        // verified engine mutation returned. Production code must not contain this delay.
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-        // Model the process adapter's authoritative mutation rule: advance the host revision only
-        // after the engine operation has returned success.
+        // Match Office's authoritative mutation rule: revision advances only after verified engine
+        // success. Callback delivery is evidence for rendering work, never revision authority.
         recorder.setHostRevision(1);
         recorder.setPhase(DeliveryPhase::RevisionAdvanced);
 
         const auto after = semanticView->paragraphs(kMaxParagraphs, kMaxSemanticBytes);
         if (!validParagraphSnapshot(after))
-            finish(1, "post-edit semantic projection was invalid");
-        std::cout << "native_callback_after_paragraph_0=" << after.paragraphs[0] << '\n';
-        if (after.paragraphs[0] != std::string(kEditMarker) + before.paragraphs[0])
-            finish(1, "post-edit semantic projection did not contain the exact callback probe edit");
-        if (after.paragraphs[1] != before.paragraphs[1]
-            || after.paragraphs[2] != before.paragraphs[2])
-        {
-            finish(1, "callback probe edit changed an unexpected paragraph");
-        }
+            finish(1, "post-format semantic projection was invalid");
+        if (after.paragraphs != before.paragraphs)
+            finish(1, "format-only callback probe unexpectedly changed paragraph text");
 
         const std::uint64_t afterHash = paintHash(*document);
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -334,7 +323,8 @@ int main(int argc, char* argv[])
 
         printObservations(events);
         std::cout << "native_callback_semantic_revision_progression=R0-R1\n";
-        std::cout << "native_callback_semantic_edit_verified=ok\n";
+        std::cout << "native_callback_format_readback_verified=ok\n";
+        std::cout << "native_callback_text_semantics_unchanged=ok\n";
         std::cout << "native_callback_render_hash_changed="
                   << (beforeHash == afterHash ? "no" : "yes") << '\n';
         std::cout << "native_callback_observation_status=observed\n";
