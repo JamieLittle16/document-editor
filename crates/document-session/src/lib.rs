@@ -486,9 +486,6 @@ impl<E: DocumentEngine> DocumentSession<E> {
     }
 
     pub fn open_text_fixture(&mut self, text: String) -> Result<DocumentRevision, EngineError> {
-        // Reserve the next generation before asking the engine to replace authority. This makes
-        // exhaustion fail without touching the current engine binding, while a normal engine
-        // failure leaves the current generation/revision unchanged.
         let next_authority = self.authority_generation.checked_next().ok_or_else(|| {
             EngineError::Internal(String::from("document authority generation exhausted"))
         })?;
@@ -498,11 +495,6 @@ impl<E: DocumentEngine> DocumentSession<E> {
         Ok(revision)
     }
 
-    /// Replaces the engine binding after worker/engine loss and immediately withdraws authority.
-    ///
-    /// The old generation is not incremented merely because a process object was replaced. A new
-    /// generation is committed only after the replacement engine successfully opens/restores a
-    /// document. Until then all previously stamped work is rejected as having no open authority.
     pub fn replace_engine_after_authority_loss(&mut self, engine: E) {
         self.engine = engine;
         self.revision = None;
@@ -538,7 +530,6 @@ impl<E: DocumentEngine> DocumentSession<E> {
         self.last_operation_sequence
     }
 
-    /// Reads semantic text and scopes it to this exact session authority incarnation.
     pub fn semantic_text(&self) -> Result<SessionObservation<String>, EngineError> {
         let observation = self.engine.semantic_text()?;
         let Some(current) = self.revision else {
@@ -558,7 +549,6 @@ impl<E: DocumentEngine> DocumentSession<E> {
         ))
     }
 
-    /// Rejects any authority stamp that no longer matches the exact live authority/revision.
     pub fn require_current_stamp(
         &self,
         stamp: SessionAuthorityStamp,
@@ -581,7 +571,6 @@ impl<E: DocumentEngine> DocumentSession<E> {
         Ok(())
     }
 
-    /// Rejects an observation from another authority generation or an older revision.
     pub fn require_current<T>(
         &self,
         observation: &SessionObservation<T>,
@@ -589,7 +578,6 @@ impl<E: DocumentEngine> DocumentSession<E> {
         self.require_current_stamp(observation.authority_stamp())
     }
 
-    /// Captures a payload and explicit checkpoint lineage from a current session observation.
     pub fn capture_recovery_checkpoint<T: Clone>(
         &mut self,
         observation: &SessionObservation<T>,
@@ -609,7 +597,6 @@ impl<E: DocumentEngine> DocumentSession<E> {
         ))
     }
 
-    /// Restores a text-fixture checkpoint when it already represents every accepted operation.
     pub fn recover_text_fixture_from_checkpoint(
         &mut self,
         checkpoint: &RecoveryCheckpoint<String>,
@@ -617,21 +604,12 @@ impl<E: DocumentEngine> DocumentSession<E> {
         self.recover_text_fixture_with_journal(checkpoint, &[])
     }
 
-    /// R0A qualification adapter: restore a checkpoint and its complete accepted transaction tail.
-    ///
-    /// Journal provenance is validated *before* the replacement authority opens. Replayed
-    /// transactions are rebased only onto the replacement authority's local revision clock; their
-    /// original immutable record remains unchanged. Replay does not allocate new accepted-operation
-    /// sequences because it reconstructs already-accepted user input rather than accepting new
-    /// intent. Any replay failure withdraws replacement authority so partially reconstructed state
-    /// cannot be consumed as current.
     pub fn recover_text_fixture_with_journal(
         &mut self,
         checkpoint: &RecoveryCheckpoint<String>,
         journal: &[SessionTransactionApplied],
     ) -> Result<RecoveryApplied, RecoveryReplayError> {
         self.validate_recovery_journal(checkpoint, journal)?;
-
         self.open_text_fixture(checkpoint.value().clone())?;
 
         for record in journal {
@@ -716,10 +694,6 @@ impl<E: DocumentEngine> DocumentSession<E> {
         Ok(())
     }
 
-    /// Applies new user intent and returns immutable accepted-operation lineage.
-    ///
-    /// The operation sequence is reserved before engine mutation but committed only after success,
-    /// so rejected transactions neither mutate session revision nor create journal gaps.
     pub fn apply_transaction(
         &mut self,
         transaction: DocumentTransaction,
@@ -912,7 +886,9 @@ mod tests {
 
         assert!(matches!(
             rejected,
-            Err(EngineError::Protocol(ProtocolError::RevisionConflict { .. }))
+            Err(EngineError::Protocol(
+                ProtocolError::RevisionConflict { .. }
+            ))
         ));
         assert_eq!(first.sequence().get(), 1);
         assert_eq!(second.sequence().get(), 2);
@@ -920,7 +896,10 @@ mod tests {
         assert_eq!(first.result().revision(), DocumentRevision::new(1));
         assert_eq!(second.source(), first.result());
         assert_eq!(second.result().revision(), DocumentRevision::new(2));
-        assert_eq!(session.latest_accepted_operation_sequence(), second.sequence());
+        assert_eq!(
+            session.latest_accepted_operation_sequence(),
+            second.sequence()
+        );
         assert_eq!(session.semantic_text().unwrap().value().as_str(), "Abc!");
     }
 
@@ -1018,8 +997,6 @@ mod tests {
             recovered_stamp.authority_generation(),
             old_final_stamp.authority_generation()
         );
-        // The replacement engine starts a fresh local revision clock at R0 and replays two
-        // already-accepted operations, so its final revision is R2 rather than the old R3.
         assert_eq!(recovered_stamp.revision(), DocumentRevision::new(2));
         assert_eq!(session.semantic_text().unwrap().value().as_str(), "Abc!?");
         assert_eq!(
