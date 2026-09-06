@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "apps/desktop",
   "crates/app-core",
+  "crates/document-anchors",
   "crates/document-protocol",
   "crates/document-transport",
   "crates/document-engine-api",
