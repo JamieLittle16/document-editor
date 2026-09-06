@@ -9,10 +9,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# This is intentionally explicit. A new crate or dependency edge should require an
-# architectural decision in the same change rather than silently expanding the graph.
-# R0A harness exceptions (notably desktop -> mock/session) are documented by their
-# presence here and should be removed as the production app-core path replaces them.
+# This is intentionally explicit. A new crate or production/build dependency edge should require
+# an architectural decision in the same change rather than silently expanding the shipping graph.
+# R0A harness exceptions (notably desktop -> mock/session) are documented by their presence here
+# and should be removed as the production app-core path replaces them.
 ALLOWED_INTERNAL_DEPENDENCIES: dict[str, set[str]] = {
     "document-protocol": set(),
     "document-transport": {"document-protocol"},
@@ -40,7 +40,16 @@ ALLOWED_INTERNAL_DEPENDENCIES: dict[str, set[str]] = {
     },
 }
 
-DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
+# Test-only edges are intentionally separate from the shipping graph above. A crate listed here may
+# use the dependency from [dev-dependencies], but moving the same edge into [dependencies] or
+# [build-dependencies] still fails the guard. This keeps deterministic test harnesses from becoming
+# accidental product architecture.
+ALLOWED_INTERNAL_DEV_DEPENDENCIES: dict[str, set[str]] = {
+    "app-core": {"document-engine-mock", "document-protocol"},
+}
+
+PRODUCTION_DEPENDENCY_TABLES = ("dependencies", "build-dependencies")
+DEV_DEPENDENCY_TABLES = ("dev-dependencies",)
 
 
 def manifest_paths() -> list[Path]:
@@ -64,9 +73,11 @@ def crate_name(manifest: dict[str, object], path: Path) -> str:
     return package["name"]
 
 
-def path_dependencies(manifest: dict[str, object]) -> set[str]:
+def path_dependencies(
+    manifest: dict[str, object], table_names: tuple[str, ...]
+) -> set[str]:
     dependencies: set[str] = set()
-    for table_name in DEPENDENCY_TABLES:
+    for table_name in table_names:
         table = manifest.get(table_name, {})
         if not isinstance(table, dict):
             continue
@@ -103,13 +114,26 @@ def main() -> int:
             )
             continue
 
-        actual_internal = path_dependencies(manifest) & known_crates
-        allowed = ALLOWED_INTERNAL_DEPENDENCIES[name]
-        forbidden = actual_internal - allowed
-        if forbidden:
+        allowed_production = ALLOWED_INTERNAL_DEPENDENCIES[name]
+        allowed_dev = allowed_production | ALLOWED_INTERNAL_DEV_DEPENDENCIES.get(name, set())
+
+        actual_production = (
+            path_dependencies(manifest, PRODUCTION_DEPENDENCY_TABLES) & known_crates
+        )
+        actual_dev = path_dependencies(manifest, DEV_DEPENDENCY_TABLES) & known_crates
+
+        forbidden_production = actual_production - allowed_production
+        if forbidden_production:
             errors.append(
-                f"{name} has forbidden internal dependency edge(s): "
-                + ", ".join(sorted(forbidden))
+                f"{name} has forbidden production/build internal dependency edge(s): "
+                + ", ".join(sorted(forbidden_production))
+            )
+
+        forbidden_dev = actual_dev - allowed_dev
+        if forbidden_dev:
+            errors.append(
+                f"{name} has forbidden test-only internal dependency edge(s): "
+                + ", ".join(sorted(forbidden_dev))
             )
 
     stale_policy = set(ALLOWED_INTERNAL_DEPENDENCIES) - known_crates
@@ -117,6 +141,13 @@ def main() -> int:
         errors.append(
             "architecture dependency policy names missing crate(s): "
             + ", ".join(sorted(stale_policy))
+        )
+
+    stale_dev_policy = set(ALLOWED_INTERNAL_DEV_DEPENDENCIES) - known_crates
+    if stale_dev_policy:
+        errors.append(
+            "architecture dev-dependency policy names missing crate(s): "
+            + ", ".join(sorted(stale_dev_policy))
         )
 
     if errors:

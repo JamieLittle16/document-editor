@@ -9,5 +9,9 @@ license.workspace = true
 document-engine-api = { path = "../document-engine-api" }
 document-session = { path = "../document-session" }
 
+[dev-dependencies]
+document-engine-mock = { path = "../document-engine-mock" }
+document-protocol = { path = "../document-protocol" }
+
 [lints]
 workspace = true
