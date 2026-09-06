@@ -22,7 +22,6 @@
 #include <rtl/string.hxx>
 #include <rtl/textenc.h>
 #include <rtl/ustring.hxx>
-#include <vcl/scheduler.hxx>
 
 #include <algorithm>
 #include <cstddef>
@@ -39,6 +38,15 @@ namespace comphelper
 {
 css::uno::Reference<css::uno::XComponentContext> getProcessComponentContext();
 }
+
+// `Scheduler::ProcessEventsToIdle()` is VCL_DLLPUBLIC in LibreOffice, but the
+// distro SDK intentionally does not install the private VCL C++ headers. This
+// module is already version-pinned to LO 24.2, so bind that one exported Itanium
+// ABI symbol explicitly rather than copying private headers into Office. The
+// module links with `-Wl,-z,defs`, making the pinned symbol part of CI
+// qualification. Nothing about this symbol crosses the unloadable module ABI.
+extern "C" void r0aProcessLibreOfficeEventsToIdle()
+    __asm__("_ZN9Scheduler19ProcessEventsToIdleEv");
 
 namespace
 {
@@ -168,7 +176,7 @@ extern "C" int r0a_writer_semantics_move_first_paragraph_down(
         // scheduler after executeDispatch before inspecting document state. Do
         // exactly the same here: this is deterministic event completion, not a
         // timing sleep or polling heuristic.
-        Scheduler::ProcessEventsToIdle();
+        r0aProcessLibreOfficeEventsToIdle();
 
         // The caller deliberately verifies exact P1,P0,P2 semantics after this
         // returns. A dispatch call by itself is never accepted as move evidence.
