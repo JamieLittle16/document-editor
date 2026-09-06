@@ -183,6 +183,31 @@ std::string formatRelation(
     }
     return output.str();
 }
+
+std::string paragraphLabel(const std::string& text)
+{
+    for (std::size_t index = 0; index < kExpectedBefore.size(); ++index)
+    {
+        if (text == kExpectedBefore[index])
+            return "P" + std::to_string(index);
+    }
+    return "unknown";
+}
+
+std::string formatObservedOrder(const r0a::IdentityProbeSnapshot& snapshot)
+{
+    if (snapshot.status != r0a::SemanticReadStatus::Ok)
+        return "read-error";
+
+    std::ostringstream output;
+    for (std::size_t index = 0; index < snapshot.paragraphs.size(); ++index)
+    {
+        if (index != 0)
+            output << '-';
+        output << paragraphLabel(snapshot.paragraphs[index].text);
+    }
+    return output.str();
+}
 } // namespace
 
 int main(int argc, char* argv[])
@@ -200,48 +225,75 @@ int main(int argc, char* argv[])
     if (modulePath == nullptr || modulePath[0] == '\0')
         return fail(std::string("missing ") + kModulePathEnvironment);
 
+    std::unique_ptr<lok::Office> office;
+    std::unique_ptr<lok::Document> document;
+    std::unique_ptr<r0a::WriterSemanticView> semanticView;
     void* qualificationLibrary = nullptr;
+
+    // This native qualification process is subject to the same pinned
+    // LibreOffice 24.2 process-global finalizer defect as the production adapter
+    // spike. Always destroy every object we own first, then preserve the intended
+    // exit status with process-level reclamation instead of entering the broken
+    // process-global static-finalizer phase.
+    const auto finish = [&](int status, const std::string& message) {
+        if (!message.empty())
+            std::cerr << "native_move_probe_error=" << message << '\n';
+
+        semanticView.reset();
+        if (qualificationLibrary != nullptr)
+        {
+            dlclose(qualificationLibrary);
+            qualificationLibrary = nullptr;
+        }
+        document.reset();
+        office.reset();
+        std::cout.flush();
+        std::cerr.flush();
+        std::_Exit(status);
+    };
+
     try
     {
-        std::unique_ptr<lok::Office> office(lok::lok_cpp_init(installPath, profileUrl));
+        office.reset(lok::lok_cpp_init(installPath, profileUrl));
         if (!office)
             return fail("could not initialise LibreOfficeKit");
 
-        std::unique_ptr<lok::Document> document(office->documentLoad(inputPath));
+        document.reset(office->documentLoad(inputPath));
         if (!document)
-            return fail("could not load input DOCX: " + takeError(*office));
+            finish(1, "could not load input DOCX: " + takeError(*office));
         if (document->getDocumentType() != LOK_DOCTYPE_TEXT)
-            return fail("input fixture is not a Writer/text document");
+            finish(1, "input fixture is not a Writer/text document");
         document->initializeForRendering();
 
         std::string semanticError;
-        auto semanticView = r0a::WriterSemanticView::acquire(semanticError);
+        semanticView = r0a::WriterSemanticView::acquire(semanticError);
         if (!semanticView)
-            return fail("could not acquire same-authority Writer semantic view: " + semanticError);
+            finish(1, "could not acquire same-authority Writer semantic view: " + semanticError);
 
         const auto before = semanticView->identityProbeParagraphs(
             kMaxParagraphs, kMaxIdentityBytes);
         const auto beforeRepeat = semanticView->identityProbeParagraphs(
             kMaxParagraphs, kMaxIdentityBytes);
         if (!sameSnapshot(before, beforeRepeat))
-            return fail("baseline identity projection is not repeatable");
+            finish(1, "baseline identity projection is not repeatable");
         if (!hasExpectedTexts(before, kExpectedBefore))
-            return fail("baseline identity projection does not match deterministic fixture");
+            finish(1, "baseline identity projection does not match deterministic fixture");
         if (!hasUniqueProbeTokens(before))
-            return fail("baseline identity projection contains invalid or duplicate tokens");
+            finish(1, "baseline identity projection contains invalid or duplicate tokens");
 
         const auto beforeSemantic = semanticView->paragraphs(
             kMaxParagraphs, kMaxSemanticBytes);
         if (!hasExpectedTexts(beforeSemantic, kExpectedBefore))
-            return fail("normal semantic projection disagrees with move baseline");
+            finish(1, "normal semantic projection disagrees with move baseline");
 
         qualificationLibrary = dlopen(modulePath, RTLD_NOW | RTLD_LOCAL);
         if (qualificationLibrary == nullptr)
         {
             const char* loaderError = dlerror();
-            return fail(
+            finish(
+                1,
                 std::string("could not reopen qualification module: ")
-                + (loaderError == nullptr ? "unknown dynamic-loader error" : loaderError));
+                    + (loaderError == nullptr ? "unknown dynamic-loader error" : loaderError));
         }
 
         const auto moveFirstParagraphDown = loadFunction<r0a::WriterMoveFirstParagraphDownFn>(
@@ -251,51 +303,51 @@ int main(int argc, char* argv[])
         const int moveStatus = moveFirstParagraphDown(moveError.data(), moveError.size());
         if (moveStatus != r0a::kWriterSemanticStatusOk)
         {
-            return fail(
+            finish(
+                1,
                 moveError[0] == '\0'
                     ? "Writer-native paragraph move failed without an error message"
                     : std::string(moveError.data()));
         }
 
-        // Successful dispatch is deliberately insufficient evidence. Require the
-        // same live semantic view to observe the exact reordered paragraph text.
+        // Successful dispatch is deliberately insufficient evidence. Observe and
+        // report the exact post-dispatch state even on mismatch, then keep the
+        // semantic acceptance criterion strict.
         const auto after = semanticView->identityProbeParagraphs(
             kMaxParagraphs, kMaxIdentityBytes);
         const auto afterRepeat = semanticView->identityProbeParagraphs(
             kMaxParagraphs, kMaxIdentityBytes);
-        if (!sameSnapshot(after, afterRepeat))
-            return fail("identity projection is not repeatable after Writer-native move");
-        if (!hasExpectedTexts(after, kExpectedAfter))
-            return fail("Writer-native move did not produce exact P1,P0,P2 paragraph order");
-        if (!hasUniqueProbeTokens(after))
-            return fail("post-move identity projection contains invalid or duplicate tokens");
-
-        const auto afterSemantic = semanticView->paragraphs(
-            kMaxParagraphs, kMaxSemanticBytes);
-        if (!hasExpectedTexts(afterSemantic, kExpectedAfter))
-            return fail("normal semantic projection disagrees with post-move identity projection");
 
         std::cout << "native_move_tokens_before=" << formatTokens(before) << '\n';
         std::cout << "native_move_tokens_after=" << formatTokens(after) << '\n';
         std::cout << "native_move_identity_relation=" << formatRelation(before, after) << '\n';
+        std::cout << "native_move_observed_order=" << formatObservedOrder(after) << '\n';
+        std::cout.flush();
+
+        if (!sameSnapshot(after, afterRepeat))
+            finish(1, "identity projection is not repeatable after Writer-native move");
+        if (!hasExpectedTexts(after, kExpectedAfter))
+            finish(1, "Writer-native move did not produce exact P1,P0,P2 paragraph order");
+        if (!hasUniqueProbeTokens(after))
+            finish(1, "post-move identity projection contains invalid or duplicate tokens");
+
+        const auto afterSemantic = semanticView->paragraphs(
+            kMaxParagraphs, kMaxSemanticBytes);
+        if (!hasExpectedTexts(afterSemantic, kExpectedAfter))
+            finish(1, "normal semantic projection disagrees with post-move identity projection");
+
         std::cout << "native_move_probe_repeatable=ok\n";
         std::cout << "native_move_semantic_order=P1-P0-P2\n";
         std::cout << "native_move_identity_status=observed\n";
         std::cout.flush();
-
-        // Preserve the already-qualified shutdown ordering: release the semantic
-        // view first, then the extra dlopen reference, then document and Office.
-        semanticView.reset();
-        dlclose(qualificationLibrary);
-        qualificationLibrary = nullptr;
-        document.reset();
-        office.reset();
-        return 0;
+        finish(0, "");
     }
     catch (const std::exception& error)
     {
-        if (qualificationLibrary != nullptr)
-            dlclose(qualificationLibrary);
-        return fail(error.what());
+        finish(1, error.what());
+    }
+    catch (...)
+    {
+        finish(1, "unknown native exception");
     }
 }
