@@ -50,7 +50,7 @@ slint::slint! {
                 }
                 MenuItem {
                     title: "Zoom Out";
-                    shortcut: @keys(Control + "Minus");
+                    shortcut: @keys(Control + HyphenMinus);
                     activated => {
                         if root.zoom-percent > 50 {
                             root.zoom-percent -= 10;
