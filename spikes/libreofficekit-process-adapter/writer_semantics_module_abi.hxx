@@ -11,13 +11,17 @@
 // version-specific UNO knowledge and must be unloadable before LibreOfficeKit
 // teardown.
 //
-// Probe tokens exposed by ABI v2 are intentionally view-local evidence. They
+// Probe tokens exposed by ABI v2+ are intentionally view-local evidence. They
 // only let the qualification harness ask whether two observations referred to
 // the same UNO object while one WriterSemanticView remained alive. They are not
 // document identities, paragraph IDs, persistence keys or product protocol.
+//
+// ABI v3 adds one formatting-only qualification operation. The operation owns
+// all UNO property knowledge inside the compatibility module and reports success
+// only after the requested formatting value is read back from Writer.
 namespace r0a
 {
-constexpr std::uint32_t kWriterSemanticModuleAbiVersion = 2;
+constexpr std::uint32_t kWriterSemanticModuleAbiVersion = 3;
 
 constexpr int kWriterSemanticStatusOk = 0;
 constexpr int kWriterSemanticStatusLimitExceeded = 1;
@@ -41,6 +45,10 @@ using WriterSemanticSplitFirstParagraphFn = int (*)(
     char* error,
     std::size_t errorCapacity);
 using WriterSemanticMergeFirstTwoParagraphsFn = int (*)(
+    void* view,
+    char* error,
+    std::size_t errorCapacity);
+using WriterSemanticCenterFirstParagraphFn = int (*)(
     void* view,
     char* error,
     std::size_t errorCapacity);
@@ -89,16 +97,25 @@ extern "C" int r0a_writer_semantics_encode_identity_paragraphs(
     char* error,
     std::size_t errorCapacity);
 
-// Qualification-only structural edits. Each successful call performs exactly
-// one authoritative mutation of the same live Writer document. The process
-// adapter, not this module, advances the externally observed qualification
-// revision after success.
+// Qualification-only edits. Each successful call performs exactly one
+// authoritative mutation of the same live Writer document. The process adapter,
+// not this module, advances the externally observed qualification revision after
+// success.
 extern "C" int r0a_writer_semantics_split_first_paragraph(
     void* view,
     std::uint16_t characterOffset,
     char* error,
     std::size_t errorCapacity);
 extern "C" int r0a_writer_semantics_merge_first_two_paragraphs(
+    void* view,
+    char* error,
+    std::size_t errorCapacity);
+
+// Formatting-only qualification. Centers the first Writer paragraph through
+// its semantic paragraph property and verifies ParaAdjust == CENTER before
+// returning success. Text and paragraph cardinality are not intentionally
+// changed by this operation.
+extern "C" int r0a_writer_semantics_center_first_paragraph(
     void* view,
     char* error,
     std::size_t errorCapacity);

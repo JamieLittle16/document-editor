@@ -154,3 +154,10 @@ jobs:
               /tmp/document-editor-lok-process-adapter \
               /usr/lib/libreoffice/program \
               /tmp/document-editor-lok-input.docx
+      - name: Qualify formatting-only paragraph identity
+        run: |
+          R0A_WRITER_SEMANTICS_MODULE=/tmp/libdocument-editor-writer-semantics-24-2.so \
+            python3 spikes/libreofficekit-process-adapter/paragraph_format_identity_contract.py \
+              /tmp/document-editor-lok-process-adapter \
+              /usr/lib/libreoffice/program \
+              /tmp/document-editor-lok-input.docx

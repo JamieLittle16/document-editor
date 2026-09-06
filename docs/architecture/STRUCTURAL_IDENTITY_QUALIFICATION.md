@@ -4,12 +4,13 @@ Status: qualified engine evidence, not a production identity or history-anchor c
 
 ## Question
 
-Before Office defines durable paragraph identities, history anchors, comment anchors or collaboration references, we need to know what identity continuity the bootstrap Writer engine actually preserves under structural edits.
+Before Office defines durable paragraph identities, history anchors, comment anchors or collaboration references, we need to know what identity continuity the bootstrap Writer engine actually preserves under edits.
 
-The qualification now asks two deliberately narrow questions inside one live Writer authority:
+The qualification now asks three deliberately narrow questions inside one live Writer authority:
 
 1. which paragraph UNO objects survive an interior paragraph split followed by merge;
-2. which paragraph UNO objects survive insertion of an empty paragraph at an existing boundary followed by deletion of that inserted paragraph.
+2. which paragraph UNO objects survive insertion of an empty paragraph at an existing boundary followed by deletion of that inserted paragraph;
+3. which paragraph UNO objects survive a verified formatting-only paragraph mutation with no text or structural change.
 
 The result is evidence for a future reconciliation layer. It is not permission to expose UNO identity to product code.
 
@@ -39,7 +40,7 @@ It does **not** mean:
 - stable identity across worker restart;
 - a pointer or engine address exposed across the process boundary.
 
-The host sees only native-neutral tokens and paragraph text. Repeated observations without mutation must produce the same token relation before any structural result is interpreted.
+The host sees only native-neutral tokens and paragraph text. Repeated observations without mutation must produce the same token relation before any edit result is interpreted.
 
 ## Fixture
 
@@ -49,7 +50,7 @@ P1 = "This fixture is generated deterministically in CI."
 P2 = "Stable semantic identity must be measured, not assumed."
 ```
 
-Every successful structural mutation advances the native qualification revision exactly once.
+Every successful qualification mutation advances the native qualification revision exactly once.
 
 ## Qualification A: interior split then merge
 
@@ -151,15 +152,59 @@ Interpretation:
 - untouched `P1` and `P2` objects survive both operations;
 - exact semantic restoration still does not restore the original `P0` engine object.
 
+## Qualification C: formatting-only paragraph mutation
+
+The third sequence again runs in a fresh native process. It changes no paragraph text and introduces no structural boundary.
+
+The version-pinned semantic module queries the first paragraph's `XPropertySet`, sets its `ParaAdjust` value to `CENTER`, and returns success only after reading the property back as `CENTER`. The process adapter advances the qualification revision only after that verified native mutation succeeds.
+
+The sequence:
+
+1. observes `(P0, P1, P2)` at `R0` and proves identity-probe repeatability;
+2. confirms the ordinary semantic projection is also `(P0, P1, P2)` at `R0`;
+3. applies and read-back verifies `ParaAdjust = CENTER` on `P0`;
+4. requires revision `R1`;
+5. requires both identity and ordinary semantic projections to remain exactly `(P0, P1, P2)`;
+6. proves identity-probe repeatability again at `R1`.
+
+Two independent CI executions reproduced the same relation:
+
+```text
+representative R0 before formatting: (1, 2, 3)
+representative R1 after formatting:  (1, 2, 3)
+
+pinned R0 -> R1 relation
+0 -> 0
+1 -> 1
+2 -> 2
+```
+
+Interpretation:
+
+- the first paragraph remains the same Writer UNO object after its verified alignment change;
+- untouched second and third paragraphs also remain the same objects;
+- formatting-only mutation advances semantic revision even though the paragraph-text projection is unchanged;
+- object equality can therefore carry useful **positive** continuity evidence within one live authority.
+
+This does not make object inequality the inverse signal. Qualifications A and B already prove that a logically continuous paragraph can acquire a different engine object after ordinary structural edits.
+
 ## Architectural conclusion
 
 **Writer UNO object identity is useful local continuity evidence, but it is not durable logical identity.**
 
-Both tested structural round trips are non-invertible at the engine-object level. This is no longer an edge case tied only to splitting paragraph content: even inserting and deleting an empty adjacent paragraph can restore exact document semantics while replacing an original paragraph object.
+The combined evidence gives Office an asymmetric reconciliation rule:
 
-Therefore Office must not define Git-like history, comments, collaboration anchors or durable selections as aliases of Writer object identity.
+```text
+same live Writer object
+    => strong positive evidence of logical continuity
 
-The eventual identity/reconciliation layer should treat engine identity as one evidence channel among several, alongside transaction lineage, structural neighbourhood, semantic content and explicit product-owned identity where justified.
+different/missing live Writer object
+    => not sufficient evidence of logical discontinuity
+```
+
+Formatting-only mutation preserves all observed paragraph objects in the pinned engine, while two ordinary structural round trips replace an original paragraph object despite exact semantic restoration.
+
+Therefore Office must not define Git-like history, comments, collaboration anchors or durable selections as aliases of Writer object identity. The eventual identity/reconciliation layer should treat engine identity as one evidence channel among several, alongside transaction lineage, structural neighbourhood, semantic content and explicit product-owned identity where justified.
 
 This is particularly important for history. Undo/redo, branch replay or crash recovery may restore equivalent semantics while the bootstrap engine chooses different internal objects. Product history must remain logically stable across that implementation choice.
 
@@ -167,37 +212,41 @@ This is particularly important for history. Undo/redo, branch replay or crash re
 
 `structural_identity_contract.py` pins the interior split/merge experiment.
 
-`paragraph_insert_delete_contract.py` runs the insertion/deletion observation probe and pins only the independently reproduced relation.
+`paragraph_insert_delete_contract.py` pins the boundary insertion/deletion experiment.
+
+`paragraph_format_identity_contract.py` pins the independently reproduced formatting-only relation plus verified `CENTER` read-back, exact `R0 -> R1` revision progression, unchanged paragraph-text semantics and probe repeatability.
 
 Together they require:
 
 - probe repeatability without mutation;
-- exact `R0 -> R1 -> R2` revision progression;
-- exact semantic results for each structural operation;
-- the structural identity relations above.
+- exact revision progression for each mutation;
+- exact semantic results for each qualification;
+- the independently reproduced identity relations above.
 
 CI deliberately does not pin:
 
 - numeric probe-token values;
 - UNO addresses;
-- object allocation order beyond the measured relation;
+- object allocation order beyond the measured relations;
 - DOCX package bytes;
 - raster hashes;
-- any permanent product schema.
+- any permanent product schema or formatting API.
 
 If a future LibreOffice version changes a relation, qualification should fail visibly. The result must then be re-measured and the reconciliation design reassessed rather than silently accepting changed engine behaviour.
 
 ## What this unlocks
 
-Two distinct structural sequences now establish the same invariant: **semantic equivalence and engine-object identity are different dimensions**.
+The current evidence establishes two complementary invariants:
+
+1. **semantic equivalence and engine-object identity are different dimensions**;
+2. **same-object equality is useful positive continuity evidence during a live session, but loss of equality is not a logical deletion signal**.
 
 The next qualification sequence should cover:
 
 1. paragraph move/reorder;
-2. formatting-only edits;
-3. duplicate-text paragraphs to defeat naive content matching;
-4. save/reload and worker restart, where live UNO identity must not be assumed to survive;
-5. callback/invalidation ordering relative to semantic revision changes.
+2. duplicate-text paragraphs to defeat naive content matching;
+3. save/reload and worker restart, where live UNO identity must not be assumed to survive;
+4. callback/invalidation ordering relative to semantic revision changes.
 
 Only after those measurements should Office freeze a product-owned paragraph/anchor reconciliation model and make the durable Git-like history store depend on it.
 
@@ -210,5 +259,6 @@ This qualification does not authorize:
 - leaking UNO references or engine addresses outside the version-pinned native module;
 - content hashes as identities;
 - text offsets as durable history/comment/collaboration anchors;
+- treating formatting preservation of object identity as a guarantee for every property or Writer structure;
 - assuming these paragraph results generalize to tables, lists, fields, comments, tracked changes or other Writer structures;
 - assuming the pinned 24.2 relations hold on future LibreOffice versions without requalification.

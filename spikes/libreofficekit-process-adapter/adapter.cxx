@@ -41,6 +41,7 @@ constexpr unsigned char kCommandInsertPrefix = 6;
 constexpr unsigned char kCommandIdentityProbeSnapshot = 7;
 constexpr unsigned char kCommandSplitFirstParagraph = 8;
 constexpr unsigned char kCommandMergeFirstTwoParagraphs = 9;
+constexpr unsigned char kCommandCenterFirstParagraph = 10;
 
 constexpr unsigned char kSemanticProjectionVersion = 2;
 constexpr unsigned char kIdentityProbeProjectionVersion = 1;
@@ -464,6 +465,26 @@ std::vector<unsigned char> mergeFirstTwoParagraphs(
     return {kStatusOk, kCommandMergeFirstTwoParagraphs};
 }
 
+std::vector<unsigned char> centerFirstParagraph(
+    r0a::WriterSemanticView* semanticView,
+    std::uint64_t& documentRevision,
+    const std::vector<unsigned char>& request)
+{
+    if (semanticView == nullptr)
+        return errorPayload(kStatusEngineState, kCommandCenterFirstParagraph, "no Writer document is open");
+    if (request.size() != 1)
+        return errorPayload(kStatusInvalidRequest, kCommandCenterFirstParagraph, "invalid paragraph-format request");
+    if (documentRevision == std::numeric_limits<std::uint64_t>::max())
+        return errorPayload(kStatusEngineState, kCommandCenterFirstParagraph, "document revision exhausted");
+
+    std::string error;
+    if (!semanticView->centerFirstParagraph(error))
+        return errorPayload(kStatusEngineState, kCommandCenterFirstParagraph, error);
+
+    ++documentRevision;
+    return {kStatusOk, kCommandCenterFirstParagraph};
+}
+
 [[noreturn]] void retireNativeProcess(
     int status,
     std::unique_ptr<r0a::WriterSemanticView>& semanticView,
@@ -578,6 +599,9 @@ int main(int argc, char* argv[])
                     break;
                 case kCommandMergeFirstTwoParagraphs:
                     response = mergeFirstTwoParagraphs(semanticView.get(), documentRevision, frame.payload);
+                    break;
+                case kCommandCenterFirstParagraph:
+                    response = centerFirstParagraph(semanticView.get(), documentRevision, frame.payload);
                     break;
                 default:
                     response = errorPayload(kStatusInvalidRequest, command, "unknown R0A command");
