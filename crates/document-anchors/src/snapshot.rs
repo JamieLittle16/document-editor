@@ -170,11 +170,8 @@ impl ParagraphAnchorSnapshot {
             });
         }
 
-        for (index, (record, semantic_text)) in self
-            .paragraphs
-            .iter()
-            .zip(semantic_paragraphs)
-            .enumerate()
+        for (index, (record, semantic_text)) in
+            self.paragraphs.iter().zip(semantic_paragraphs).enumerate()
         {
             if record.semantic_text().as_bytes() != semantic_text.as_bytes() {
                 return Err(AnchorRebindError::SemanticMismatch { index });
