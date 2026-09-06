@@ -12,6 +12,7 @@ members = [
   "crates/extension-api",
   "crates/extension-runtime",
   "crates/feature-host",
+  "crates/render-buffer-pool",
   "workers/document-worker",
 ]
 
