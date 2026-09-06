@@ -1,16 +1,18 @@
 # Project State
 
-Last updated: 2026-09-05
+Last updated: 2026-09-06
 
 ## Current phase
 
 **R0A — architecture/contracts and high-risk spikes.**
 
-The modular feature kernel, bounded worker/process foundation, semantic-observation freshness contract, pinned LibreOffice same-authority semantic/lifecycle qualification, two structural identity sequences and one formatting-only identity control are now established.
+The modular feature kernel, bounded worker/process foundation, revision-stamped semantic authority, normalized compatibility harness, Writer render-transfer boundary, structural reconciliation evidence, invalidation/restart qualification and application-level checkpoint/replay recovery semantics are now established.
 
-Interior split/merge and paragraph-boundary insertion/deletion both prove that live Writer object identity is **not durable logical identity**: exact semantic round trips can replace the original first-paragraph Writer object. The independently reproduced formatting-only control adds the complementary fact that a verified first-paragraph alignment mutation preserves all three paragraph objects while advancing the semantic revision. The resulting reconciliation rule is asymmetric: same-object equality is strong positive continuity evidence inside one live authority, while loss of equality is not sufficient evidence of logical discontinuity.
+Interior split/merge and paragraph-boundary insertion/deletion prove that live Writer object identity is **not durable logical identity**: exact semantic round trips can replace the original first-paragraph Writer object. Formatting-only mutation supplies the complementary positive-continuity control, duplicate-text qualification prevents content equality becoming identity, and reopen/full-worker-restart qualification proves native identity-token scope ends with the live authority. The resulting rule is asymmetric: same-object equality is strong positive continuity evidence inside one live authority; inequality, text equality and naked native tokens are all non-decisive for durable identity.
 
-The next identity frontier is move/reorder, duplicate-text ambiguity and save/reload/restart reconciliation before durable Git-like history anchors or recovery semantics are frozen.
+The first Slint 1.17.1 UI viability slice is also qualified without entering product crates: Windows/macOS/Linux source builds pass, Linux native Winit/software windows pass at forced 1× and 2× DPI, and the caller-owned raster boundary survives unchanged. The production UI framework is **still deliberately unfrozen** pending real-platform IME/accessibility, desktop-integration and viewport-performance evidence.
+
+The remaining R0A uncertainty is therefore concentrated in the smallest product-owned durable reconciliation/history-anchor model and the final evidence-backed UI framework selection. Persisted recovery storage, production supervisor wiring and render-buffer implementation move into R0B rather than reopening the already-qualified authority/control/data-plane semantics.
 
 ## Accepted strategic decisions
 
@@ -48,7 +50,10 @@ The next identity frontier is move/reorder, duplicate-text ambiguity and save/re
 - semantic equivalence and bootstrap-engine object identity are distinct dimensions: history/replay must remain logically stable even when equivalent edits yield different engine objects;
 - product-owned reconciliation is required even for simple paragraph-boundary insertion/deletion because exact semantic restoration can still leave different Writer objects;
 - same live Writer object is strong positive continuity evidence, but a changed/missing object is non-decisive and must be reconciled using product-owned lineage/structure/semantic evidence;
-- formatting-only changes advance semantic revision even when the current paragraph-text projection is unchanged, so revision freshness cannot be inferred from text equality.
+- formatting-only changes advance semantic revision even when the current paragraph-text projection is unchanged, so revision freshness cannot be inferred from text equality;
+- recovery publishes a new ephemeral authority only after checkpoint restoration plus complete contiguous accepted-operation replay; accepted-operation lineage survives recovery even when the replacement engine restarts its local revision clock;
+- render invalidations are advisory dirtiness beneath product-owned authority and cannot independently advance semantic state;
+- the UI toolkit must remain behind a replaceable presentation adapter; toolkit types/codegen/MSRV constraints may not leak into application, history, session, recovery or engine architecture.
 
 ## Implemented in repository skeleton
 
@@ -93,7 +98,10 @@ The next identity frontier is move/reorder, duplicate-text ambiguity and save/re
 - ADR-0007 documents the product-facing freshness invariant;
 - real native semantic projection version 2 carries the same qualification revision signal across the LibreOffice process boundary;
 - live native qualification proves `R0 -> mutation -> R1` and fresh process/reopen -> new `R0`;
-- formatting-only native qualification proves revision advances even when the current paragraph-text projection remains unchanged.
+- formatting-only native qualification proves revision advances even when the current paragraph-text projection remains unchanged;
+- product-facing `AuthorityGeneration` distinguishes replacement authority from an old authority even when both engines expose the same local revision value;
+- `SessionAuthorityStamp` carries authority/revision provenance for asynchronous render/search/diagnostic work;
+- accepted mutations receive monotonic product-owned operation sequence numbers only after engine acceptance.
 
 ### Protocol and transaction admission
 
@@ -168,14 +176,32 @@ The next identity frontier is move/reorder, duplicate-text ambiguity and save/re
 - qualification ABI v3 adds one formatting-only operation without exposing UNO types to the adapter;
 - first-paragraph `ParaAdjust = CENTER` mutation is accepted only after native read-back verification;
 - twice-reproduced formatting-only sequence advances `R0 -> R1`, leaves paragraph text/cardinality unchanged and preserves all three paragraph objects with relation `0->0;1->1;2->2`;
+- duplicate-text qualification proves distinct live paragraphs can have identical content while remaining separately targetable;
+- identity-token scope is explicitly limited to one retained semantic view; close/reopen and full worker restart can reuse the same diagnostic numeric tuple without implying continuity;
+- public headless Writer paragraph move/reorder was explicitly investigated and closed as a qualification boundary after `.uno:MoveDown` remained unavailable despite verified list setup and the safe public alternatives/private ABI route were exhausted;
 - separate CI contracts pin independently reproduced relations without pinning numeric probe tokens or addresses;
-- combined evidence establishes the asymmetric reconciliation rule: equality is strong positive continuity evidence, inequality is non-decisive;
+- combined evidence establishes the asymmetric reconciliation rule: equality is strong positive continuity evidence, inequality/content equality/naked token equality are non-decisive;
 - `STRUCTURAL_IDENTITY_QUALIFICATION.md` records the evidence and its history/reconciliation consequence.
+
+### Recovery authority/checkpoint semantics
+
+- application-owned `AuthorityGeneration` scopes live semantic/asynchronous work independently of engine-local revision numbers;
+- accepted operations receive monotonic product-owned sequence numbers only after successful engine acceptance;
+- recovery checkpoints bind the exact source authority and accepted-operation cursor represented by the checkpoint;
+- recovery validates a complete contiguous accepted-operation tail before opening replacement authority;
+- replay reuses already-accepted operation identities rather than manufacturing new user operations;
+- checkpoint-open failure publishes no replacement authority;
+- replay failure withdraws the partially reconstructed replacement authority;
+- successful recovery publishes a fresh authority only after checkpoint restore plus full replay succeed;
+- accepted-operation lineage remains continuous even when the replacement engine restarts its own `DocumentRevision` at `R0`;
+- stale observations and render-style authority stamps remain invalid after recovery;
+- ADR-0012 records recovery as new ephemeral authority plus preserved accepted-operation lineage;
+- durable checkpoint/journal encoding, crash-safe storage policy and production supervisor wiring remain R0B work.
 
 ### Version-pinned semantic module and native reclamation
 
 - `writer_semantics_24_2.cxx` is an unloadable version-pinned compatibility module containing UNO/internal LibreOffice dependencies;
-- `writer_semantics_module_abi.hxx` defines a tiny qualification-only C ABI with no UNO types and now versions formatting qualification explicitly as ABI v3;
+- `writer_semantics_module_abi.hxx` defines a tiny qualification-only C ABI with no UNO types and versions qualification surfaces explicitly;
 - `writer_semantics_proxy.cxx` owns module loading, ABI validation, semantic-view release and bounded native-neutral decoding;
 - the adapter executable itself does not link UNO or `libmergedlo`;
 - CI proves the module builds, loads, acquires the live Writer authority and unloads after semantic-view release;
@@ -215,7 +241,7 @@ fresh child restart after forced death: OK
 workspace architecture/fmt/check/tests/Clippy: OK
 ```
 
-This proves process restartability and failure observation. It does not yet prove recovery of an open logical document/session after engine loss.
+This proves process restartability and failure observation. Application-level recovery semantics now complement it with explicit authority withdrawal, checkpoint provenance and contiguous accepted-operation replay; persisted crash-safe artifacts and production supervisor wiring remain separate R0B implementation work.
 
 ## Qualified native LibreOffice process behaviour
 
@@ -240,6 +266,9 @@ formatting-only ParaAdjust CENTER read-back: OK
 formatting-only R0 -> R1 revision progression: OK
 formatting-only paragraph text/cardinality unchanged: OK
 pinned formatting identity relation 0->0;1->1;2->2: OK
+duplicate-text ambiguity qualification: OK
+identity-token scope across reopen/full worker restart: OK
+invalidation callback safety beneath semantic revision authority: OK
 semantic size-limit rejection without worker death: OK
 semantic module/view removal on close: OK
 graceful command shutdown + status 0 + clean EOF: OK
@@ -303,36 +332,54 @@ ParaAdjust CENTER read-back: OK
 paragraph-text semantics: unchanged
 ```
 
-Numeric tokens are diagnostic only. Together these results prove that exact semantic restoration does not imply restoration of Writer object identity, while same-object equality can still provide strong positive continuity evidence for non-structural edits inside one live authority.
+Numeric tokens are diagnostic only. Together with duplicate-content and restart-scope evidence, these results prove that exact semantic restoration does not imply restoration of Writer object identity, content equality does not establish identity, and native tokens cannot outlive their live authority.
+
+## Qualified UI-framework viability evidence
+
+Slint 1.17.1 currently survives the first R0A executable viability gate while remaining quarantined under `spikes/ui-framework-slint/` on its own Rust 1.92 toolchain.
+
+Current CI evidence:
+
+```text
+Ubuntu format/check/test/pedantic Clippy: OK
+Windows check/test: OK
+macOS check/test: OK
+Linux Winit/software native window 1x: scale=1, physical=1100x800
+Linux Winit/software native window 2x: scale=2, physical=2200x1600
+caller-owned qualification raster: 262144 bytes at both scales
+raster checksum: 6744427103266065219 at both scales
+accessibility feature/explicit landmarks in candidate: enabled/compiled
+ordinary Office Rust 1.85 + native LibreOffice gates: unchanged and green
+```
+
+The qualification also records real integration costs rather than hiding them: Linux X11 needs explicit fontconfig/XKB runtime dependencies; Slint generated Rust requires the isolated candidate crate to use `unsafe_code = "deny"` rather than product-wide `forbid`; and forced scale-factor changes require candidate recompilation because Slint compiler passes as well as Winit consume scale information.
+
+This evidence establishes viability, **not framework selection**. ADR-0005 remains normative until real-platform IME, screen-reader/accessibility, desktop integration, viewport performance, licensing and toolchain evidence is sufficient.
 
 ## Immediate next engineering spikes
 
-1. Qualify move/reorder while preserving distinct semantic content and neighbourhood evidence.
-2. Add duplicate-text fixtures so reconciliation cannot accidentally depend on content equality.
-3. Requalify semantic identity/reconciliation across **save/reload** and worker restart separately from live-instance behaviour.
-4. Exercise LibreOfficeKit callbacks/invalidation and map ordering, threading and coalescing behaviour.
-5. Relate callbacks/invalidation to semantic revisions so host caches can be invalidated safely.
-6. Measure tile/render payload patterns to decide copy/shared-memory and batching thresholds.
-7. Build the first compatibility fixture runner around normalized semantic assertions rather than binary-package equality.
-8. Run UI framework qualification (Slint remains a leading candidate; selection must remain evidence-driven).
-9. Add generated/property tests for larger feature graphs before external plugin loading work begins.
-10. Define additive contribution registries only when the first real product feature needs them; do not invent a generic callback bus.
-11. Write the production native-adapter/supervisor/unsafe-boundary ADR only after the remaining identity and callback measurements constrain the design.
-12. Design durable history anchors, restart reconciliation and document-session recovery only after move/duplicate/reload evidence is sufficient to define product-owned identity semantics.
+1. Define the smallest product-owned durable logical anchor/reconciliation evidence model justified by the completed structural/duplicate/restart measurements, without mirroring UNO, file-format IDs or content hashes.
+2. Exercise that anchor/reconciliation model across explicit save/reload/checkpoint artifacts and ensure history/recovery consumers depend only on product-owned lineage, structure, semantic evidence and authority scope.
+3. Continue UI framework qualification with real Windows/macOS/Linux IME/international-input and screen-reader/accessibility fixtures.
+4. Make clipboard, drag/drop, native file-dialog/menu integration explicit and measure large viewport scroll/resize/zoom behavior.
+5. Resolve UI packaging/licensing/MSRV costs and compare the strongest control alternative if any material Slint concern survives; then supersede ADR-0005 with an evidence-backed selection or explicit continuation decision.
+6. Begin R0B implementation of the already-selected render data plane and recovery architecture: bounded host-owned render buffers, durable checkpoint/journal storage and production worker-supervisor/UI recovery wiring.
+7. Add generated/property tests for larger feature graphs before external plugin loading work begins.
+8. Define additive contribution registries only when the first real product feature needs them; do not invent a generic callback bus.
 
 ## Explicitly not started / deliberately unfrozen
 
-- production UI;
+- production UI framework integration;
 - production Rust-to-LibreOffice FFI;
-- production process-supervisor API;
+- production process-supervisor API and UI recovery surface;
 - production stable paragraph/object identity;
 - production semantic anchor model;
 - durable Git-like transaction/history store;
+- persisted crash-safe checkpoint/journal encoding and retention policy;
 - final engine domain-message wire encoding;
 - final cross-platform socket/pipe abstraction;
 - request concurrency/cancellation policy;
-- shared-memory render transport;
-- document-session recovery after a real engine crash;
+- concrete shared-memory/mapped render-buffer backend and pool tuning;
 - native document engine;
 - collaboration;
 - runtime loading of third-party plugins;
@@ -357,22 +404,22 @@ Public view/accessibility APIs are not accepted as whole-document semantic autho
 
 The internal ABI is version-specific and quarantined behind an unloadable compatibility module. The process worker owns bootstrap-runtime containment, including the measured process-global-finalizer reclamation rule for LibreOffice 24.2.
 
-Live Writer paragraph object continuity is now measured through interior split/merge, boundary insertion/deletion and formatting-only alignment mutation. Structural semantic round trips can replace an object; verified formatting preserves all observed objects. These are reconciliation signals, explicitly not product identity.
+Live Writer paragraph object continuity is measured through interior split/merge, boundary insertion/deletion and formatting-only alignment mutation; duplicate-content ambiguity and reopen/full-worker-restart token scope are also qualified. The attempted public headless paragraph-reorder path is recorded as an explicit negative capability boundary rather than filled with unsafe private-symbol assumptions. These are reconciliation signals, never product identity.
 
-The production native adapter remains deliberately unfrozen while **move/reorder, duplicate-text, reload/restart identity, callback behaviour and production versioning/supervisor policy** are still being measured.
+Native invalidation ordering/threading is also qualified as advisory render dirtiness beneath application-owned authority. The production native adapter remains deliberately unfrozen only where implementation details still genuinely remain open: versioning/supervisor packaging, durable storage integration and the eventual bootstrap-engine replacement strategy.
 
 ## Current protocol boundary
 
 Request IDs, revisions and temporary text offsets use fixed-width integers. Transactions validate range/resource invariants before mutation.
 
-`TextOffset` remains a narrow bootstrap value, not the future history/comment/collaboration anchor. Failed `w14` identity experiments, successful same-authority UNO access, two non-invertible structural identity sequences and the positive formatting-continuity control all reinforce the same rule: incidental file-format or engine identities do not become product semantic authority by convenience.
+`TextOffset` remains a narrow bootstrap value, not the future history/comment/collaboration anchor. Failed file-format identity experiments, qualified live-object evidence, duplicate-content ambiguity and restart scope all reinforce the same rule: incidental file-format, content or engine identities do not become product semantic authority by convenience.
 
-`SemanticObservation<T>` and `DocumentRevision` are product-facing freshness concepts. The current native semantic/identity projections, formatting command and version bytes are qualification codec, not a frozen schema.
+`SemanticObservation<T>`, `AuthorityGeneration`, `DocumentRevision`, `SessionAuthorityStamp` and accepted-operation sequence numbers are product-facing provenance concepts. Recovery checkpoints bind authority plus an accepted-operation cursor and only publish replacement authority after complete contiguous replay. The current native semantic/identity projections and qualification command/version bytes remain disposable codecs, not a frozen schema.
 
-## Current transport boundary
+## Current transport and render-data boundary
 
-`document-transport` owns bounded stream framing for opaque control bytes only. It proves request correlation, framing-version checks, payload admission, short-read/write behaviour and precise EOF/truncation semantics without selecting the final message serializer or shared-memory policy.
+`document-transport` owns bounded stream framing for opaque control bytes only. It proves request correlation, framing-version checks, payload admission, short-read/write behaviour and precise EOF/truncation semantics without selecting the final message serializer.
 
 The frame concept is exercised across both the Cargo-built mock worker and native LibreOffice process. The native adapter additionally proves that bounded revision-stamped semantic bytes and qualification-only identity evidence can cross that seam without leaking engine implementation types.
 
-The next boundary to qualify is **reconciliation under move/reorder and duplicate semantic content, then reload/restart**, not another transport or acquisition mechanism.
+Large render payloads are now architecturally separated from that control plane by ADR-0011: small authority/revision-tagged descriptors coordinate host-owned bounded reusable out-of-band raster buffers with scoped worker leases. R0B implements the OS-specific mapping/pool backend and tuning; it does not reopen the control/data-plane split.
