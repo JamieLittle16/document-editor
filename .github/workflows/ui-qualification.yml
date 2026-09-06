@@ -1,0 +1,77 @@
+name: ui-qualification
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  slint-cross-platform:
+    name: slint-${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: spikes/ui-framework-slint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: rustfmt,clippy
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+      - name: Check
+        run: cargo check --all-targets
+      - name: Test
+        run: cargo test --all-targets
+      - name: Clippy
+        if: runner.os == 'Linux'
+        run: cargo clippy --all-targets -- -D warnings
+
+  slint-linux-native-smoke:
+    name: slint-linux-native-smoke
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: spikes/ui-framework-slint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - name: Install virtual X server
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y xvfb
+      - name: Create native window at 1x
+        run: |
+          set -o pipefail
+          xvfb-run -a env \
+            OFFICE_UI_QUALIFY_ONCE=1 \
+            SLINT_BACKEND=winit-software \
+            SLINT_SCALE_FACTOR=1 \
+            cargo run --quiet | tee /tmp/office-slint-1x.log
+          grep -Fx 'ui_framework=slint-1.17.1' /tmp/office-slint-1x.log
+          grep -Fx 'ui_backend=winit-software' /tmp/office-slint-1x.log
+          grep -Fx 'ui_accessibility=enabled' /tmp/office-slint-1x.log
+          grep -Fx 'ui_scale_factor=1' /tmp/office-slint-1x.log
+          grep -Fx 'ui_tile_bytes=262144' /tmp/office-slint-1x.log
+          grep -Fx 'ui_tile_checksum=6744427103266065219' /tmp/office-slint-1x.log
+      - name: Create native window at 2x
+        run: |
+          set -o pipefail
+          xvfb-run -a env \
+            OFFICE_UI_QUALIFY_ONCE=1 \
+            SLINT_BACKEND=winit-software \
+            SLINT_SCALE_FACTOR=2 \
+            cargo run --quiet | tee /tmp/office-slint-2x.log
+          grep -Fx 'ui_scale_factor=2' /tmp/office-slint-2x.log
+          grep -Fx 'ui_tile_bytes=262144' /tmp/office-slint-2x.log
+          grep -Fx 'ui_tile_checksum=6744427103266065219' /tmp/office-slint-2x.log
