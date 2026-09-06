@@ -1,6 +1,6 @@
 # UI Framework Qualification
 
-Status: **R0A active qualification — no production framework selected yet**
+Status: **R0A first Slint viability slice qualified — no production framework selected yet**
 
 Date: 2026-09-06
 
@@ -28,7 +28,7 @@ This matrix records the current ecosystem state, not a permanent ranking. It mus
 
 | Candidate | Current R0A disposition | Strong evidence | Current concern |
 | --- | --- | --- | --- |
-| **Slint 1.17.1** | **primary executable candidate** | stable 1.x API; Winit desktop backend; AccessKit accessibility feature; explicit accessibility landmarks/IDs; LineEdit/TextInput IME path; MenuBar/shortcuts; caller-owned `SharedPixelBuffer`; software/FemtoVG/Skia renderer choices | current crate MSRV is Rust 1.92; royalty-free proprietary use requires attribution; desktop feature set is still actively maturing and must be measured |
+| **Slint 1.17.1** | **first executable viability slice qualified; still not selected** | stable 1.x API; Winit desktop backend; AccessKit accessibility feature; explicit accessibility landmarks/IDs; LineEdit/TextInput IME path; MenuBar/shortcuts; caller-owned `SharedPixelBuffer`; software/FemtoVG/Skia renderer choices; current spike compiles/tests on all three target desktop OSes and creates qualified 1×/2× Linux native windows | current crate MSRV is Rust 1.92; generated UI code requires a contained lint boundary rather than product-wide `unsafe_code = "forbid"`; Linux Winit/X11 packaging needs explicit font/XKB runtime dependencies; royalty-free proprietary use requires attribution; desktop feature set is still actively maturing and must be measured |
 | **egui/eframe** | fallback/control candidate | mature Rust ecosystem; native AccessKit enabled by default in eframe; strong custom drawing; active IME/DPI work; permissive MIT/Apache licensing | immediate-mode shell ergonomics and native desktop/editor feel need an editor-shaped spike before selection |
 | **Xilem/Masonry** | watchlist | strong modern architecture; winit + Vello/wgpu + Parley + AccessKit; Apache-2.0 | project explicitly describes itself as experimental/alpha-quality with missing features and breaking changes; current MSRV 1.92 |
 | **Iced 0.14** | reject for current production selection | modern reactive architecture, IME and testing work | stable release still lacks a production AccessKit accessibility integration; accessibility is non-negotiable for Office |
@@ -50,6 +50,10 @@ with its own nested Cargo workspace and Rust 1.92 toolchain. This is intentional
 - qualifying a current toolkit must not silently raise the product MSRV;
 - rejecting the toolkit must require deleting only a spike, not untangling product dependencies;
 - accepting it later will require an explicit follow-up decision about the product toolchain.
+
+Slint's generated `slint!` Rust contains a scoped `allow(unsafe_code)`. Rust deliberately does not allow that scoped attribute to override a crate-level `forbid(unsafe_code)`, even though Office-authored spike code contains no unsafe block. The qualification crate therefore uses `unsafe_code = "deny"` while the Office product workspace remains at `forbid`.
+
+If Slint is eventually selected, the preferred shape is a small generated-UI adapter crate with a safe product-facing facade. Toolkit/codegen constraints must not weaken the safety policy of application, history, session, recovery or engine crates.
 
 ## Executable Slint workload
 
@@ -78,7 +82,49 @@ It performs:
 4. the native-window smoke at forced 1× and 2× Slint scale factors;
 5. structural checking of the deterministic render buffer checksum/byte volume.
 
+The Linux Winit/X11 qualification image explicitly installs `libfontconfig1-dev` and `libxkbcommon-x11-0`; these were discovered from actual build/native-window failures and are packaging evidence rather than assumed runner state.
+
+`SLINT_SCALE_FACTOR` is consumed by both Slint compiler passes and the Winit backend. The DPI qualification therefore recompiles the small candidate crate before the 2× run while retaining already-built dependencies; changing only the runtime environment of a binary first compiled at 1× is not a valid forced-scale test.
+
 Cross-platform compilation is necessary evidence but not sufficient evidence of native UX quality. Final acceptance still requires manual/platform-native IME and screen-reader checks on real Windows/macOS/Linux environments.
+
+## Observed first viability slice
+
+The first executable Slint viability slice is now green in CI without changing the Office product workspace or its Rust 1.85 safety/quality gates.
+
+Qualified source/build evidence:
+
+- Ubuntu 24.04: format, `cargo check --all-targets`, tests and pedantic clippy with `-D warnings` pass;
+- macOS: `cargo check --all-targets` and tests pass;
+- Windows: `cargo check --all-targets` and tests pass;
+- the ordinary Office Rust 1.85 architecture/fmt/check/test/clippy job remains green on the same PR head;
+- the full pinned LibreOffice native compatibility/render/identity/restart/invalidation qualification remains green on the same PR head.
+
+Qualified Linux native-window evidence under Xvfb and `SLINT_BACKEND=winit-software`:
+
+```text
+1×:
+ui_framework=slint-1.17.1
+ui_backend=winit-software
+ui_accessibility=enabled
+ui_scale_factor=1
+ui_physical_size=1100x800
+ui_tile_bytes=262144
+ui_tile_checksum=6744427103266065219
+
+2×:
+ui_framework=slint-1.17.1
+ui_backend=winit-software
+ui_accessibility=enabled
+ui_scale_factor=2
+ui_physical_size=2200x1600
+ui_tile_bytes=262144
+ui_tile_checksum=6744427103266065219
+```
+
+This establishes that Slint is **viable enough to continue qualifying** for the Office shell: the editor-shaped candidate compiles across the three target desktop OSes, the real Linux Winit/software path creates a native window at both forced DPI scales, and the host-owned raster payload survives unchanged.
+
+It does **not** select Slint. In particular, this CI evidence does not prove production-quality IME behavior, real screen-reader behavior, native file-dialog/clipboard/drag-drop integration, large-viewport interaction latency, multi-monitor behavior or long-term maintenance/licensing suitability.
 
 ## Accessibility caution
 
@@ -114,12 +160,15 @@ Do **not** add Slint (or another candidate) to `apps/desktop` until all of the f
 - performance of viewport composition/resizing/scrolling is measured sufficiently to reject obvious jank;
 - ADR-0005 is superseded by an explicit selection or explicit continuation of the no-selection state.
 
+The first three items now have positive Slint evidence. The remaining items are selection evidence, not reasons to weaken the architecture boundary in advance.
+
 ## Sources checked for this qualification
 
 Primary/current references checked on 2026-09-06 include:
 
 - Slint 1.17.1 crate metadata and feature documentation;
 - Slint language/reference documentation for LineEdit, ScrollView, MenuBar and accessibility properties;
+- Slint 1.17 source for Winit scale-factor handling and compiler constant-scale handling;
 - Slint 1.17 release notes and licensing terms;
 - egui/eframe accessibility documentation and current changelog;
 - Linebender Xilem README/releases;
