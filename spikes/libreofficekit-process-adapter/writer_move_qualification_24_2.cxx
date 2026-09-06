@@ -22,6 +22,7 @@
 #include <rtl/string.hxx>
 #include <rtl/textenc.h>
 #include <rtl/ustring.hxx>
+#include <vcl/scheduler.hxx>
 
 #include <algorithm>
 #include <cstddef>
@@ -162,6 +163,12 @@ extern "C" int r0a_writer_semantics_move_first_paragraph_down(
             rtl::OUString(),
             0,
             arguments);
+
+        // LibreOffice's own MacrosTest::dispatchCommand() drains the VCL
+        // scheduler after executeDispatch before inspecting document state. Do
+        // exactly the same here: this is deterministic event completion, not a
+        // timing sleep or polling heuristic.
+        Scheduler::ProcessEventsToIdle();
 
         // The caller deliberately verifies exact P1,P0,P2 semantics after this
         // returns. A dispatch call by itself is never accepted as move evidence.
