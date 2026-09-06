@@ -44,10 +44,7 @@ pub struct SessionAuthorityStamp {
 }
 
 impl SessionAuthorityStamp {
-    const fn new(
-        authority_generation: AuthorityGeneration,
-        revision: DocumentRevision,
-    ) -> Self {
+    const fn new(authority_generation: AuthorityGeneration, revision: DocumentRevision) -> Self {
         Self {
             authority_generation,
             revision,
@@ -232,8 +229,12 @@ pub enum CheckpointCaptureError {
 impl fmt::Display for CheckpointCaptureError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotCurrent(error) => write!(formatter, "cannot checkpoint stale authority: {error}"),
-            Self::SequenceExhausted => formatter.write_str("recovery checkpoint sequence exhausted"),
+            Self::NotCurrent(error) => {
+                write!(formatter, "cannot checkpoint stale authority: {error}")
+            }
+            Self::SequenceExhausted => {
+                formatter.write_str("recovery checkpoint sequence exhausted")
+            }
         }
     }
 }
@@ -688,7 +689,10 @@ mod tests {
         assert_eq!(applied.checkpoint_sequence(), checkpoint.sequence());
         assert_eq!(applied.source(), source_stamp);
         assert_eq!(applied.recovered(), recovered_stamp);
-        assert_ne!(recovered_stamp.authority_generation(), source_stamp.authority_generation());
+        assert_ne!(
+            recovered_stamp.authority_generation(),
+            source_stamp.authority_generation()
+        );
         assert_eq!(recovered_stamp.revision(), DocumentRevision::INITIAL);
         assert_eq!(session.semantic_text().unwrap().value().as_str(), "Abc");
         assert_eq!(
