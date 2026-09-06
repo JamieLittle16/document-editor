@@ -82,7 +82,10 @@ fn explicit_product_lineage_beats_incidental_structural_semantic_similarity() {
     };
 
     assert_eq!(*binding.target(), ParagraphLocator(1));
-    assert_eq!(basis, ReconciliationBasis::ProductLineage(applied.sequence()));
+    assert_eq!(
+        basis,
+        ReconciliationBasis::ProductLineage(applied.sequence())
+    );
 }
 
 #[test]
