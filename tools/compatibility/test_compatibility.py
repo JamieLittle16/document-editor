@@ -90,11 +90,11 @@ class CompatibilityHarnessTests(unittest.TestCase):
                                 "projection": "docx-paragraph-text-v1",
                                 "expected_before": ["before"],
                                 "expected_after": ["after"],
-                                "implicit_magic": true,
+                                "implicit_magic": True,
                             }
                         ],
                     }
-                ).replace("true", "true"),
+                ),
                 encoding="utf-8",
             )
 
