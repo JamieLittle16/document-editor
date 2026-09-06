@@ -43,6 +43,7 @@ jobs:
         run: |
           python3 spikes/libreofficekit-probe/make_fixture.py /tmp/document-editor-lok-input.docx
           mkdir -p /tmp/document-editor-lok-profile
+          mkdir -p /tmp/document-editor-move-profile
       - name: Build LibreOfficeKit boundary probe
         run: |
           g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
@@ -112,6 +113,7 @@ jobs:
               -I/usr/include/x86_64-linux-gnu/libreoffice \
               -I/tmp/document-editor-uno-generated \
               spikes/libreofficekit-process-adapter/writer_semantics_24_2.cxx \
+              spikes/libreofficekit-process-adapter/writer_move_qualification_24_2.cxx \
               -L/usr/lib/libreoffice/program \
               -L/usr/lib/libreoffice/sdk/lib \
               -Wl,-rpath,/usr/lib/libreoffice/program \
@@ -131,6 +133,13 @@ jobs:
               spikes/libreofficekit-process-adapter/writer_semantics_proxy.cxx \
               -ldl \
               -o /tmp/document-editor-lok-process-adapter
+
+            g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
+              -I/usr/include/libreoffice \
+              spikes/libreofficekit-process-adapter/paragraph_move_identity_native_probe.cxx \
+              spikes/libreofficekit-process-adapter/writer_semantics_proxy.cxx \
+              -ldl \
+              -o /tmp/document-editor-paragraph-move-identity-probe
           } 2>&1 | tee /tmp/document-editor-native-build.log
       - name: Retain native adapter compiler diagnostics on failure
         if: failure()
@@ -160,4 +169,11 @@ jobs:
             python3 spikes/libreofficekit-process-adapter/paragraph_format_identity_contract.py \
               /tmp/document-editor-lok-process-adapter \
               /usr/lib/libreoffice/program \
+              /tmp/document-editor-lok-input.docx
+      - name: Observe Writer-native paragraph move identity
+        run: |
+          R0A_WRITER_SEMANTICS_MODULE=/tmp/libdocument-editor-writer-semantics-24-2.so \
+            /tmp/document-editor-paragraph-move-identity-probe \
+              /usr/lib/libreoffice/program \
+              file:///tmp/document-editor-move-profile \
               /tmp/document-editor-lok-input.docx
