@@ -209,21 +209,29 @@ fn main() -> Result<(), slint::PlatformError> {
 
     if std::env::var_os("OFFICE_UI_QUALIFY_ONCE").is_some() {
         ui.show()?;
-        let scale_factor = ui.window().scale_factor();
-        let physical_size = ui.window().size();
-        println!("ui_framework=slint-1.17.1");
-        println!("ui_backend=winit-software");
-        println!("ui_accessibility=enabled");
-        println!("ui_scale_factor={scale_factor}");
-        println!(
-            "ui_physical_size={}x{}",
-            physical_size.width, physical_size.height
-        );
-        println!("ui_tile_bytes={EXPECTED_TILE_BYTES}");
-        println!("ui_tile_checksum={checksum}");
-        assert!(scale_factor.is_finite() && scale_factor > 0.0);
-        assert!(physical_size.width > 0 && physical_size.height > 0);
-        assert_eq!(checksum, EXPECTED_TILE_FNV1A64);
+        let weak_ui = ui.as_weak();
+        slint::Timer::single_shot(std::time::Duration::from_millis(50), move || {
+            let ui = weak_ui
+                .upgrade()
+                .expect("qualification window must stay alive during native smoke");
+            let scale_factor = ui.window().scale_factor();
+            let physical_size = ui.window().size();
+            println!("ui_framework=slint-1.17.1");
+            println!("ui_backend=winit-software");
+            println!("ui_accessibility=enabled");
+            println!("ui_scale_factor={scale_factor}");
+            println!(
+                "ui_physical_size={}x{}",
+                physical_size.width, physical_size.height
+            );
+            println!("ui_tile_bytes={EXPECTED_TILE_BYTES}");
+            println!("ui_tile_checksum={checksum}");
+            assert!(scale_factor.is_finite() && scale_factor > 0.0);
+            assert!(physical_size.width > 0 && physical_size.height > 0);
+            assert_eq!(checksum, EXPECTED_TILE_FNV1A64);
+            slint::quit_event_loop().expect("qualification event loop must be stoppable");
+        });
+        slint::run_event_loop()?;
         ui.hide()?;
         return Ok(());
     }
