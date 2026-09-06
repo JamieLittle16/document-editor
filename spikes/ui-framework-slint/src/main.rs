@@ -9,8 +9,6 @@ slint::slint! {
         title: "Office UI Qualification";
         width: 1100px;
         height: 800px;
-        min-width: 720px;
-        min-height: 520px;
 
         in property <image> document-tile;
         in-out property <string> search-text;
@@ -52,7 +50,7 @@ slint::slint! {
                 }
                 MenuItem {
                     title: "Zoom Out";
-                    shortcut: @keys(Control + Minus);
+                    shortcut: @keys(Control + "Minus");
                     activated => {
                         if root.zoom-percent > 50 {
                             root.zoom-percent -= 10;
@@ -194,9 +192,11 @@ fn qualification_tile() -> SharedPixelBuffer<Rgba8Pixel> {
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(1_469_598_103_934_665_603_u64, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(1_099_511_628_211)
-    })
+    bytes
+        .iter()
+        .fold(1_469_598_103_934_665_603_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(1_099_511_628_211)
+        })
 }
 
 fn main() -> Result<(), slint::PlatformError> {
