@@ -29,9 +29,8 @@ fn semantic_text(table: &ParagraphAnchorTable) -> Vec<&str> {
 
 #[test]
 fn split_merge_policy_is_product_owned_and_round_trip_stable() {
-    let mut table =
-        ParagraphAnchorTable::from_projection(LINEAGE, strings(&["P0", "P1", "P2"]))
-            .expect("initial projection must fit anchor sequence");
+    let mut table = ParagraphAnchorTable::from_projection(LINEAGE, strings(&["P0", "P1", "P2"]))
+        .expect("initial projection must fit anchor sequence");
     assert_eq!(sequences(&table), vec![1, 2, 3]);
 
     let (left, right) = table
@@ -103,9 +102,8 @@ fn rebind_refuses_to_guess_after_semantic_or_lineage_change() {
 
 #[test]
 fn retired_anchor_sequence_is_not_reused_after_snapshot_reload() {
-    let mut table =
-        ParagraphAnchorTable::from_projection(LINEAGE, strings(&["P0", "P1", "P2"]))
-            .expect("initial projection must fit anchor sequence");
+    let mut table = ParagraphAnchorTable::from_projection(LINEAGE, strings(&["P0", "P1", "P2"]))
+        .expect("initial projection must fit anchor sequence");
     let retired = table
         .insert_paragraph(1, "temporary".into())
         .expect("insert must mint a new anchor");
