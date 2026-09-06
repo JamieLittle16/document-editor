@@ -44,6 +44,7 @@ jobs:
           python3 spikes/libreofficekit-probe/make_fixture.py /tmp/document-editor-lok-input.docx
           python3 spikes/libreofficekit-probe/make_duplicate_fixture.py /tmp/document-editor-lok-duplicate.docx
           mkdir -p /tmp/document-editor-lok-profile
+          mkdir -p /tmp/document-editor-callback-profile
       - name: Build LibreOfficeKit boundary probe
         run: |
           g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
@@ -132,6 +133,14 @@ jobs:
               spikes/libreofficekit-process-adapter/writer_semantics_proxy.cxx \
               -ldl \
               -o /tmp/document-editor-lok-process-adapter
+
+            g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
+              -I/usr/include/libreoffice \
+              spikes/libreofficekit-process-adapter/invalidation_revision_probe.cxx \
+              spikes/libreofficekit-process-adapter/writer_semantics_proxy.cxx \
+              -pthread \
+              -ldl \
+              -o /tmp/document-editor-invalidation-revision-probe
           } 2>&1 | tee /tmp/document-editor-native-build.log
       - name: Retain native adapter compiler diagnostics on failure
         if: failure()
@@ -176,3 +185,11 @@ jobs:
               /tmp/document-editor-lok-process-adapter \
               /usr/lib/libreoffice/program \
               /tmp/document-editor-lok-duplicate.docx
+      - name: Qualify invalidation callback safety against semantic revision
+        run: |
+          R0A_WRITER_SEMANTICS_MODULE=/tmp/libdocument-editor-writer-semantics-24-2.so \
+            python3 spikes/libreofficekit-process-adapter/invalidation_revision_contract.py \
+              /tmp/document-editor-invalidation-revision-probe \
+              /usr/lib/libreoffice/program \
+              file:///tmp/document-editor-callback-profile \
+              /tmp/document-editor-lok-input.docx
