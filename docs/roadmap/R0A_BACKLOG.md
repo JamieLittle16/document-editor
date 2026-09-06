@@ -42,9 +42,9 @@ Status: **qualified**.
 
 ## R0A.5 Render path
 
-**Outcome:** request visible render data through the native bootstrap engine and prove caller-owned buffers, then establish the authority rule for native render invalidations.
+**Outcome:** request visible render data through the native bootstrap engine, prove caller-owned buffers, establish authority-safe invalidation behavior and select the worker/host raster transfer architecture from measured workload evidence.
 
-Status: **basic render capability and invalidation/revision safety qualified; transfer architecture deliberately unfrozen**.
+Status: **render capability, invalidation/revision safety and out-of-band transfer architecture qualified**.
 
 Qualified evidence:
 - caller-owned tile buffers render correctly through LibreOfficeKit;
@@ -53,12 +53,20 @@ Qualified evidence:
 - native callbacks are observed off the owning thread in the pinned environment;
 - unchanged-code runs place the invalidation on opposite sides of the mutation-return boundary while both occur before Office's modeled `R1` commit;
 - native invalidations are therefore advisory render dirtiness, never semantic-revision authority;
-- ADR-0009 requires callback ingestion to remain bounded/thread-safe and render work to be gated by product-owned authority.
+- ADR-0009 requires callback ingestion to remain bounded/thread-safe and render work to be gated by product-owned authority;
+- two independent unchanged-code Writer render-transfer runs reproduce the same structural raster geometry and caller-owned-buffer checksums;
+- the qualification workload measures a 256 KiB 1× tile, 1 MiB 2× tile, 3 MiB 1× visible viewport and 12 MiB 2× visible viewport;
+- current fixture page raster volume is approximately 3.86 MiB at 1× and 15.46 MiB at 2×;
+- real Writer 12-tile paint timing is recorded diagnostically but intentionally not used as a hosted-CI performance threshold;
+- ordinary control-frame pixel transfer is rejected by scale: even one measured tile is orders of magnitude larger than the current small control envelope;
+- ADR-0011 selects small authority/revision-tagged control descriptors plus host-owned bounded reusable out-of-band render buffers with scoped worker leases;
+- the OS-specific shared-memory/mapping backend, production tile size and pool sizing remain replaceable/tunable rather than frozen into application architecture.
 
-Remaining:
-- measure realistic tile payload size/frequency under scrolling/zoom/edit workloads;
-- decide copy versus shared memory and batching from evidence;
-- implement the R0B mutation fence/event sequencing that prevents pre-commit dirty callbacks from exposing new render state as an old revision.
+Remaining implementation/tuning moves to R0B:
+- implement a host-owned bounded buffer pool and platform mapping backend;
+- add lease generations, geometry/capacity validation and worker-death reclamation;
+- implement the mutation/event fence that prevents pre-commit dirty callbacks from exposing new render state as an old revision;
+- tune tile/pool/prefetch policy against broader scroll, zoom, edit and high-DPI workloads without reopening the control/data-plane split.
 
 ## R0A.6 Input/edit/save round trip
 
@@ -112,7 +120,8 @@ Current evidence:
 - host can observe non-success status + EOF;
 - fresh worker restart/reopen works;
 - semantic authority can be reacquired at a fresh revision;
-- product-owned `AuthorityGeneration` prevents an old `R0` observation becoming current merely because the replacement engine also starts at `R0`.
+- product-owned `AuthorityGeneration` prevents an old `R0` observation becoming current merely because the replacement engine also starts at `R0`;
+- ADR-0011's render lease model provides a clean rule for recovery: all unfinished render leases from a dead/replaced authority are invalid and may never publish into the recovered session.
 
 Remaining:
 - define explicit checkpoint/reopen lineage and reconciliation semantics;

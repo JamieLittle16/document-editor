@@ -45,12 +45,17 @@ jobs:
         run: |
           python3 spikes/libreofficekit-probe/make_duplicate_fixture.py /tmp/document-editor-lok-duplicate.docx
           mkdir -p /tmp/document-editor-callback-profile
-      - name: Build LibreOfficeKit boundary probe
+          mkdir -p /tmp/document-editor-render-profile
+      - name: Build LibreOfficeKit boundary probes
         run: |
           g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
             spikes/libreofficekit-probe/probe.cxx \
             -ldl \
             -o /tmp/document-editor-lok-probe
+          g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic \
+            spikes/libreofficekit-probe/render_transfer_probe.cxx \
+            -ldl \
+            -o /tmp/document-editor-render-transfer-probe
       - name: Generate pinned UNO SDK headers for native semantic qualification
         run: |
           rm -rf /tmp/document-editor-uno-generated
@@ -118,6 +123,15 @@ jobs:
             --install-path /usr/lib/libreoffice/program \
             --profile-root /tmp/document-editor-compatibility-profiles \
             --artifact-root /tmp/document-editor-compatibility
+      - name: Qualify real Writer render-transfer workload
+        run: |
+          set -o pipefail
+          python3 spikes/libreofficekit-probe/render_transfer_contract.py \
+            /tmp/document-editor-render-transfer-probe \
+            /usr/lib/libreoffice/program \
+            file:///tmp/document-editor-render-profile \
+            /tmp/document-editor-compatibility/writer-basic-text-prefix-roundtrip/input.docx \
+            | tee /tmp/document-editor-render-transfer.log
       - name: Measure identity-specific package evidence across compatibility round-trip
         run: |
           python3 spikes/libreofficekit-probe/semantic_identity.py \
@@ -166,11 +180,13 @@ jobs:
               /usr/lib/libreoffice/program \
               file:///tmp/document-editor-callback-profile \
               /tmp/document-editor-compatibility/writer-basic-text-prefix-roundtrip/input.docx
-      - name: Retain compatibility artifacts on failure
+      - name: Retain qualification artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: compatibility-artifacts
-          path: /tmp/document-editor-compatibility
+          name: qualification-artifacts
+          path: |
+            /tmp/document-editor-compatibility
+            /tmp/document-editor-render-transfer.log
           if-no-files-found: warn
           retention-days: 7

@@ -1,6 +1,6 @@
 # Document Engine Transport
 
-Status: **R0A bounded framing contract; domain message encoding and OS transport are not frozen**
+Status: **R0A bounded control framing + qualified out-of-band render data-plane architecture; domain serializer and OS transport backend are not frozen**
 
 ## Purpose
 
@@ -21,7 +21,7 @@ document operation / protocol value
         local byte stream
 ```
 
-R0A freezes only the framing behaviour required to test process isolation. It does **not** select the final domain-message serializer, socket/pipe abstraction or shared-memory mechanism.
+R0A freezes the framing behaviour required to test process isolation and the architectural separation between small control messages and large render payloads. It does **not** select the final domain-message serializer, socket/pipe abstraction or platform-specific shared-memory mapping API.
 
 ## Dependency boundary
 
@@ -63,7 +63,7 @@ This is a correctness and containment rule, not merely a performance optimisatio
 
 The writer performs the same admission check before emitting any bytes.
 
-No production payload limit is frozen in `document-transport`; the caller must supply one after workload qualification.
+No production control payload limit is frozen in `document-transport`; the caller supplies policy appropriate to the negotiated worker protocol.
 
 ## Stream semantics
 
@@ -91,27 +91,50 @@ The framing layer preserves the identifier but does not decide:
 - response ordering;
 - event/subscription semantics.
 
-Those behaviours belong to the supervised process/session layer and will be added only as the worker vertical slice requires them.
+Those behaviours belong to the supervised process/session layer.
 
 ## Large rendering data
 
-Rendered pixels should not be forced through this control frame merely because the framing exists.
+R0A render-transfer qualification closes the control/data-plane question at the architectural level.
 
-The intended split remains:
+Real Writer measurements on the pinned environment produced:
 
 ```text
-small control message
-        |
-        +-- metadata / commands / diagnostics -> framed inline bytes
-        |
-        `-- RenderRegion result -> future shared-memory/buffer descriptor
+1× 256px tile:       262,144 bytes
+2× 256px tile:     1,048,576 bytes
+1× 1024×768 view:  3,145,728 bytes
+2× 1024×768 view: 12,582,912 bytes
 ```
 
-Shared memory is deliberately not selected yet. We first need real tile-size/frequency measurements and crash-lifetime tests.
+These values are orders of magnitude larger than ordinary control messages and reproduced independently. Raw render bytes therefore **must not** be serialized inline through ordinary `DETR` frames.
+
+The selected split is:
+
+```text
+small bounded control message
+        |
+        +-- commands / semantic data / diagnostics
+        |
+        +-- render request + authority/revision + buffer lease descriptor
+        |
+        `-- render completion/error + lease descriptor
+
+host-owned bounded reusable render-buffer pool
+        |
+        `-- bulk pixels written out of band by the worker
+```
+
+The supervisor/host owns buffer allocation, capacity and lifetime. A worker receives a scoped write lease and publishes a result only through a valid completion. Worker death or authority replacement invalidates unfinished leases.
+
+Descriptors must be validated for buffer/lease identity, authority generation, document revision, offset, capacity, width, height, stride, byte length and pixel format. Raw pointers are never protocol values.
+
+The production mapping backend remains replaceable. Linux, Windows and macOS may use different shared-memory/handle-transfer mechanisms behind the same bounded lease contract. Reusable slots are preferred over creating a new mapping for every tile.
+
+See ADR-0011 and `docs/engineering/RENDER_TRANSFER_QUALIFICATION.md`.
 
 ## Executable tests
 
-The crate includes tests for:
+The framing crate includes tests for:
 
 - request round-trip;
 - response/request-ID correlation;
@@ -127,8 +150,17 @@ The crate includes tests for:
 - unknown frame kind;
 - unsupported flags.
 
-These tests use only in-memory `Read`/`Write` implementations. OS process transport is the next layer, not hidden inside the codec.
+Native CI additionally qualifies real Writer render geometry and buffer population without making hosted-runner timings a performance gate.
 
 ## Next slice
 
-The next R0A transport step is a supervised `document-worker` vertical slice that uses this framing over a real child-process stream while keeping the first domain codec explicitly provisional. That slice must prove worker startup, request/response correlation, EOF/exit detection and clean teardown before the LibreOffice adapter is placed behind it.
+R0B should implement the selected render-buffer lease model behind the supervised worker boundary:
+
+- bounded host-owned pool;
+- platform mapping backend;
+- lease generations and stale-completion rejection;
+- worker-death reclamation;
+- authority/revision validation;
+- mutation/event fencing before invalidation-driven rendering.
+
+The first implementation remains provisional enough to tune pool and tile sizing from viewport workloads without reopening the control/data-plane architecture.
