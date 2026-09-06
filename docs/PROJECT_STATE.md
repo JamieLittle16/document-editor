@@ -6,13 +6,15 @@ Last updated: 2026-09-06
 
 **R0A — architecture/contracts and high-risk spikes.**
 
-The modular feature kernel, bounded worker/process foundation, revision-stamped semantic authority, normalized compatibility harness, Writer render-transfer boundary, structural reconciliation evidence, invalidation/restart qualification and application-level checkpoint/replay recovery semantics are now established.
+The modular feature kernel, bounded worker/process foundation, revision-stamped semantic authority, normalized compatibility harness, Writer render-transfer boundary, structural reconciliation evidence, product-owned durable logical-anchor model, invalidation/restart qualification and application-level checkpoint/replay recovery semantics are now established.
 
 Interior split/merge and paragraph-boundary insertion/deletion prove that live Writer object identity is **not durable logical identity**: exact semantic round trips can replace the original first-paragraph Writer object. Formatting-only mutation supplies the complementary positive-continuity control, duplicate-text qualification prevents content equality becoming identity, and reopen/full-worker-restart qualification proves native identity-token scope ends with the live authority. The resulting rule is asymmetric: same-object equality is strong positive continuity evidence inside one live authority; inequality, text equality and naked native tokens are all non-decisive for durable identity.
 
+ADR-0013 now turns that evidence into the first product-owned anchor contract. `LogicalAnchorId` values live in a product `HistoryLineageId` namespace and outlive replaceable `LiveAnchorBinding<T>` values scoped to exact session authority. Reconciliation is conservative: explicit accepted-operation lineage is strongest, same-engine-object continuity is allowed only inside one authority generation, unique structural + semantic agreement is the fallback, and ambiguous or unresolved cases are never guessed away.
+
 The first Slint 1.17.1 UI viability slice is also qualified without entering product crates: Windows/macOS/Linux source builds pass, Linux native Winit/software windows pass at forced 1× and 2× DPI, and the caller-owned raster boundary survives unchanged. The production UI framework is **still deliberately unfrozen** pending real-platform IME/accessibility, desktop-integration and viewport-performance evidence.
 
-The remaining R0A uncertainty is therefore concentrated in the smallest product-owned durable reconciliation/history-anchor model and the final evidence-backed UI framework selection. Persisted recovery storage, production supervisor wiring and render-buffer implementation move into R0B rather than reopening the already-qualified authority/control/data-plane semantics.
+The remaining R0A architectural uncertainty is therefore concentrated in the final evidence-backed UI framework selection. Persisted recovery/anchor storage, richer semantic anchor hints, production supervisor wiring and render-buffer implementation move into R0B rather than reopening the already-qualified authority/identity/control/data-plane semantics.
 
 ## Accepted strategic decisions
 
@@ -37,7 +39,7 @@ The remaining R0A uncertainty is therefore concentrated in the smallest product-
 - worker EOF, protocol shutdown and worker exit status are separate evidence;
 - process restartability is qualified before document-session recovery semantics are designed;
 - file-format IDs and engine object addresses are evidence inputs, never product semantic identities by default;
-- semantic identity must be qualified through structural edits and reload before a durable anchor model is frozen;
+- structural/reload qualification must precede any durable anchor decision; ADR-0013 now freezes only the product-owned identity/live-binding separation justified by that evidence;
 - public view/accessibility APIs are not promoted into semantic document APIs unless whole-document behaviour is directly qualified;
 - deeper native semantics operate on the same authoritative Writer instance rather than silently creating a second document authority;
 - live semantic observations are revision-stamped and must be freshness-checked before retained/asynchronous results can affect current application state;
@@ -50,6 +52,8 @@ The remaining R0A uncertainty is therefore concentrated in the smallest product-
 - semantic equivalence and bootstrap-engine object identity are distinct dimensions: history/replay must remain logically stable even when equivalent edits yield different engine objects;
 - product-owned reconciliation is required even for simple paragraph-boundary insertion/deletion because exact semantic restoration can still leave different Writer objects;
 - same live Writer object is strong positive continuity evidence, but a changed/missing object is non-decisive and must be reconciled using product-owned lineage/structure/semantic evidence;
+- durable logical anchors use product-owned `HistoryLineageId + local sequence` identity and keep ephemeral authority/revision/engine targets in replaceable live bindings;
+- duplicate semantics, conflicting strong evidence and insufficient evidence remain explicit `Ambiguous`/`Unresolved` reconciliation outcomes rather than hidden heuristics;
 - formatting-only changes advance semantic revision even when the current paragraph-text projection is unchanged, so revision freshness cannot be inferred from text equality;
 - recovery publishes a new ephemeral authority only after checkpoint restoration plus complete contiguous accepted-operation replay; accepted-operation lineage survives recovery even when the replacement engine restarts its local revision clock;
 - render invalidations are advisory dirtiness beneath product-owned authority and cannot independently advance semantic state;
@@ -67,7 +71,7 @@ The remaining R0A uncertainty is therefore concentrated in the smallest product-
 - UI-agnostic document session;
 - desktop and document-worker harnesses;
 - CI quality gates;
-- executable architecture dependency guard;
+- executable architecture dependency guard with separate production/build and explicit test-only internal dependency policies;
 - initial product/architecture/engineering documentation and ADR discipline.
 
 ### Modular feature kernel
@@ -180,8 +184,14 @@ The remaining R0A uncertainty is therefore concentrated in the smallest product-
 - identity-token scope is explicitly limited to one retained semantic view; close/reopen and full worker restart can reuse the same diagnostic numeric tuple without implying continuity;
 - public headless Writer paragraph move/reorder was explicitly investigated and closed as a qualification boundary after `.uno:MoveDown` remained unavailable despite verified list setup and the safe public alternatives/private ABI route were exhausted;
 - separate CI contracts pin independently reproduced relations without pinning numeric probe tokens or addresses;
-- combined evidence establishes the asymmetric reconciliation rule: equality is strong positive continuity evidence, inequality/content equality/naked token equality are non-decisive;
-- `STRUCTURAL_IDENTITY_QUALIFICATION.md` records the evidence and its history/reconciliation consequence.
+- combined native evidence establishes the asymmetric reconciliation rule: equality is strong positive continuity evidence, inequality/content equality/naked token equality are non-decisive;
+- product `HistoryLineageId` plus monotonic `LogicalAnchorId` allocation now establish durable identity independently of engine authority;
+- `DurableLogicalAnchor<H>` keeps persistable product hints separate from `LiveAnchorBinding<T>` authority/revision targets;
+- reconciliation uses explicit accepted-operation lineage, same-authority engine continuity and unique structural + semantic evidence in conservative precedence order;
+- same-engine-object evidence is rejected across authority generations;
+- duplicate semantic candidates, conflicting strong evidence and insufficient evidence remain explicit `Ambiguous`/`Unresolved` outcomes;
+- save/reload and checkpoint-recovery tests preserve the exact durable anchor ID while replacing live authority;
+- `STRUCTURAL_IDENTITY_QUALIFICATION.md` records the engine evidence and ADR-0013 records the product identity/binding decision.
 
 ### Recovery authority/checkpoint semantics
 
@@ -332,7 +342,7 @@ ParaAdjust CENTER read-back: OK
 paragraph-text semantics: unchanged
 ```
 
-Numeric tokens are diagnostic only. Together with duplicate-content and restart-scope evidence, these results prove that exact semantic restoration does not imply restoration of Writer object identity, content equality does not establish identity, and native tokens cannot outlive their live authority.
+Numeric tokens are diagnostic only. Together with duplicate-content and restart-scope evidence, these results prove that exact semantic restoration does not imply restoration of Writer object identity, content equality does not establish identity, and native tokens cannot outlive their live authority. ADR-0013 converts those facts into a product-owned durable identity/rebinding contract.
 
 ## Qualified UI-framework viability evidence
 
@@ -358,24 +368,23 @@ This evidence establishes viability, **not framework selection**. ADR-0005 remai
 
 ## Immediate next engineering spikes
 
-1. Define the smallest product-owned durable logical anchor/reconciliation evidence model justified by the completed structural/duplicate/restart measurements, without mirroring UNO, file-format IDs or content hashes.
-2. Exercise that anchor/reconciliation model across explicit save/reload/checkpoint artifacts and ensure history/recovery consumers depend only on product-owned lineage, structure, semantic evidence and authority scope.
-3. Continue UI framework qualification with real Windows/macOS/Linux IME/international-input and screen-reader/accessibility fixtures.
-4. Make clipboard, drag/drop, native file-dialog/menu integration explicit and measure large viewport scroll/resize/zoom behavior.
-5. Resolve UI packaging/licensing/MSRV costs and compare the strongest control alternative if any material Slint concern survives; then supersede ADR-0005 with an evidence-backed selection or explicit continuation decision.
-6. Begin R0B implementation of the already-selected render data plane and recovery architecture: bounded host-owned render buffers, durable checkpoint/journal storage and production worker-supervisor/UI recovery wiring.
-7. Add generated/property tests for larger feature graphs before external plugin loading work begins.
-8. Define additive contribution registries only when the first real product feature needs them; do not invent a generic callback bus.
+1. Continue UI framework qualification with real Windows/macOS/Linux IME/international-input and screen-reader/accessibility fixtures.
+2. Make clipboard, drag/drop, native file-dialog/menu integration explicit and measure large viewport scroll/resize/zoom behavior.
+3. Resolve UI packaging/licensing/MSRV costs and compare the strongest control alternative if any material Slint concern survives; then supersede ADR-0005 with an evidence-backed selection or explicit continuation decision.
+4. Begin R0B implementation of the already-selected render data plane and recovery/identity architecture: bounded host-owned render buffers, durable checkpoint/journal/anchor storage and production worker-supervisor/UI recovery wiring.
+5. Evolve richer normalized anchor hints only alongside the first real structured product surfaces; do not invent a speculative universal paragraph/table/field schema.
+6. Add generated/property tests for larger feature graphs before external plugin loading work begins.
+7. Define additive contribution registries only when the first real product feature needs them; do not invent a generic callback bus.
 
 ## Explicitly not started / deliberately unfrozen
 
 - production UI framework integration;
 - production Rust-to-LibreOffice FFI;
 - production process-supervisor API and UI recovery surface;
-- production stable paragraph/object identity;
-- production semantic anchor model;
+- production rich paragraph/table/field anchor locator and persistence encoding;
+- save-as/copy/fork policy for durable history lineages;
 - durable Git-like transaction/history store;
-- persisted crash-safe checkpoint/journal encoding and retention policy;
+- persisted crash-safe checkpoint/journal/anchor encoding and retention policy;
 - final engine domain-message wire encoding;
 - final cross-platform socket/pipe abstraction;
 - request concurrency/cancellation policy;
@@ -404,7 +413,7 @@ Public view/accessibility APIs are not accepted as whole-document semantic autho
 
 The internal ABI is version-specific and quarantined behind an unloadable compatibility module. The process worker owns bootstrap-runtime containment, including the measured process-global-finalizer reclamation rule for LibreOffice 24.2.
 
-Live Writer paragraph object continuity is measured through interior split/merge, boundary insertion/deletion and formatting-only alignment mutation; duplicate-content ambiguity and reopen/full-worker-restart token scope are also qualified. The attempted public headless paragraph-reorder path is recorded as an explicit negative capability boundary rather than filled with unsafe private-symbol assumptions. These are reconciliation signals, never product identity.
+Live Writer paragraph object continuity is measured through interior split/merge, boundary insertion/deletion and formatting-only alignment mutation; duplicate-content ambiguity and reopen/full-worker-restart token scope are also qualified. The attempted public headless paragraph-reorder path is recorded as an explicit negative capability boundary rather than filled with unsafe private-symbol assumptions. These are reconciliation signals, never product identity; ADR-0013 now defines the product-owned identity and live-binding layer above them.
 
 Native invalidation ordering/threading is also qualified as advisory render dirtiness beneath application-owned authority. The production native adapter remains deliberately unfrozen only where implementation details still genuinely remain open: versioning/supervisor packaging, durable storage integration and the eventual bootstrap-engine replacement strategy.
 
@@ -414,7 +423,7 @@ Request IDs, revisions and temporary text offsets use fixed-width integers. Tran
 
 `TextOffset` remains a narrow bootstrap value, not the future history/comment/collaboration anchor. Failed file-format identity experiments, qualified live-object evidence, duplicate-content ambiguity and restart scope all reinforce the same rule: incidental file-format, content or engine identities do not become product semantic authority by convenience.
 
-`SemanticObservation<T>`, `AuthorityGeneration`, `DocumentRevision`, `SessionAuthorityStamp` and accepted-operation sequence numbers are product-facing provenance concepts. Recovery checkpoints bind authority plus an accepted-operation cursor and only publish replacement authority after complete contiguous replay. The current native semantic/identity projections and qualification command/version bytes remain disposable codecs, not a frozen schema.
+`SemanticObservation<T>`, `AuthorityGeneration`, `DocumentRevision`, `SessionAuthorityStamp`, accepted-operation sequence numbers and product `LogicalAnchorId` values now cover distinct provenance/identity jobs. Recovery checkpoints bind authority plus an accepted-operation cursor and only publish replacement authority after complete contiguous replay. Durable anchors outlive that ephemeral authority and are rebound through product evidence; current native semantic/identity projections and qualification command/version bytes remain disposable codecs, not a frozen schema.
 
 ## Current transport and render-data boundary
 
