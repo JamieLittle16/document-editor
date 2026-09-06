@@ -111,6 +111,7 @@ jobs:
               -DSAL_UNX \
               -I/usr/include/libreoffice \
               -I/usr/include/x86_64-linux-gnu/libreoffice \
+              -I/usr/lib/libreoffice/sdk/include \
               -I/tmp/document-editor-uno-generated \
               spikes/libreofficekit-process-adapter/writer_semantics_24_2.cxx \
               spikes/libreofficekit-process-adapter/writer_move_qualification_24_2.cxx \
