@@ -1,3 +1,5 @@
+use std::fs;
+
 use document_anchors::{
     AnchorRebindError, AnchorSnapshotCodecError, AnchorSnapshotLimits, DocumentLineageId,
     ParagraphAnchorRecord, ParagraphAnchorSnapshot, ParagraphAnchorTable,
@@ -123,6 +125,39 @@ fn retired_anchor_sequence_is_not_reused_after_snapshot_reload() {
         .insert_paragraph(1, "new".into())
         .expect("post-reload insert must mint a new anchor");
     assert_eq!(fresh.sequence().get(), 5);
+}
+
+#[test]
+fn persisted_checkpoint_artifact_rebinds_only_the_exact_saved_projection() {
+    let projection = strings(&["saved P0", "saved P1", "saved P2"]);
+    let table = ParagraphAnchorTable::from_projection(LINEAGE, projection.clone())
+        .expect("saved projection must fit anchor sequence");
+    let before = sequences(&table);
+    let encoded = table
+        .snapshot()
+        .encode(LIMITS)
+        .expect("checkpoint artifact must encode");
+
+    let path = std::env::temp_dir().join(format!(
+        "office-r0a-anchor-checkpoint-{}.bin",
+        std::process::id()
+    ));
+    fs::write(&path, &encoded).expect("checkpoint artifact must persist");
+    let persisted = fs::read(&path).expect("checkpoint artifact must reload");
+    fs::remove_file(&path).expect("qualification checkpoint artifact must clean up");
+
+    let snapshot = ParagraphAnchorSnapshot::decode(&persisted, LIMITS)
+        .expect("persisted checkpoint artifact must decode");
+    let rebound = snapshot
+        .rebind_exact_projection(LINEAGE, &projection)
+        .expect("unchanged saved projection must recover its product anchors");
+    assert_eq!(sequences(&rebound), before);
+
+    let externally_changed = strings(&["saved P0", "changed elsewhere", "saved P2"]);
+    assert_eq!(
+        snapshot.rebind_exact_projection(LINEAGE, &externally_changed),
+        Err(AnchorRebindError::SemanticMismatch { index: 1 })
+    );
 }
 
 #[test]
