@@ -158,7 +158,7 @@ extern "C" int r0a_writer_semantics_move_first_paragraph_down(
         const css::uno::Sequence<css::beans::PropertyValue> arguments;
         dispatchHelper->executeDispatch(
             dispatchProvider,
-            u".uno:MoveDown"_ustr,
+            rtl::OUString(u".uno:MoveDown"),
             rtl::OUString(),
             0,
             arguments);
