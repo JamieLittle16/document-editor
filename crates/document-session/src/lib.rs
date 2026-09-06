@@ -417,7 +417,9 @@ mod tests {
         let observation = session.semantic_text().unwrap();
         session.engine.fail_next_open = true;
 
-        let error = session.open_text_fixture(String::from("replacement")).unwrap_err();
+        let error = session
+            .open_text_fixture(String::from("replacement"))
+            .unwrap_err();
 
         assert!(matches!(error, EngineError::Internal(message) if message.contains("injected")));
         assert_eq!(session.known_revision(), Some(DocumentRevision::INITIAL));
