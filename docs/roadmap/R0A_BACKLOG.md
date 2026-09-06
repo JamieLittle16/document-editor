@@ -91,8 +91,12 @@ Status: **substantially qualified; permanent logical anchor/reconciliation schem
 - projection version 2 carries an explicit qualification revision;
 - engine-facing semantic observations carry `DocumentRevision`;
 - product-facing `SessionObservation<T>` is non-forgeable and carries application-owned `AuthorityGeneration` plus `DocumentRevision`;
-- retained observations are rejected after both ordinary revision advance and successful authority replacement/reopen, including the `R0 -> fresh R0` case;
-- failed opens and rejected transactions do not spuriously replace/stale current authority;
+- `SessionAuthorityStamp` extends the same product-owned authority/revision provenance to asynchronous render/search/diagnostic work without inventing another epoch mechanism;
+- retained observations and authority stamps are rejected after ordinary revision advance, explicit authority withdrawal and successful authority replacement/reopen, including the `R0 -> fresh R0` case;
+- accepted transactions receive monotonic product-owned operation sequence numbers only after engine acceptance; rejected operations consume neither revision nor operation sequence;
+- recovery checkpoints record exact source authority plus the accepted-operation cursor represented by the checkpoint;
+- checkpoint recovery validates a complete contiguous accepted-operation tail before opening replacement authority and replays already-accepted intent without issuing new operation IDs;
+- partial replay failure withdraws replacement authority rather than publishing a partially reconstructed document;
 - interior split/merge proves exact semantic restoration can destroy the original first-paragraph Writer object;
 - paragraph-boundary insertion/deletion independently reproduces the same non-invertible object relationship;
 - formatting-only `ParaAdjust = CENTER` preserves all three live paragraph objects while advancing semantic revision;
@@ -105,9 +109,9 @@ Status: **substantially qualified; permanent logical anchor/reconciliation schem
 
 ### Remaining acceptance
 
-1. Define the smallest **product-owned** reconciliation/anchor evidence model justified by the measurements above, without mirroring UNO or content hashes.
-2. Exercise that model across explicit save/reload/checkpoint recovery rather than treating view-local Writer continuity as persistence.
-3. Make history/recovery consumers depend only on product-owned lineage/structure/semantic evidence and authority scope.
+1. Define the smallest **product-owned logical anchor/reconciliation evidence model** justified by the structural measurements above, without mirroring UNO or content hashes.
+2. Exercise durable anchor/reconciliation behavior across explicit save/reload/checkpoint artifacts; the authority/checkpoint lineage itself is now qualified and must remain independent of Writer object lifetime.
+3. Keep future history/recovery consumers dependent only on product-owned lineage/structure/semantic evidence and authority scope.
 
 A permanent paragraph/history anchor must not serialize or depend on UNO references, probe tokens, file-format IDs or text equality as identity.
 
@@ -115,18 +119,29 @@ A permanent paragraph/history anchor must not serialize or depend on UNO referen
 
 **Outcome:** forcibly kill worker during a session; shell/application harness remains alive and can restart/reopen from an explicit checkpoint/recovery policy.
 
-Current evidence:
+Status: **recovery authority/checkpoint/journal semantics qualified; durable storage and production supervisor wiring move to R0B**.
+
+Qualified evidence:
 - forced worker death is contained;
 - host can observe non-success status + EOF;
 - fresh worker restart/reopen works;
 - semantic authority can be reacquired at a fresh revision;
 - product-owned `AuthorityGeneration` prevents an old `R0` observation becoming current merely because the replacement engine also starts at `R0`;
-- ADR-0011's render lease model provides a clean rule for recovery: all unfinished render leases from a dead/replaced authority are invalid and may never publish into the recovered session.
+- authority can be explicitly withdrawn while a dead engine/worker binding is replaced, making all prior semantic and asynchronous authority stamps non-current immediately;
+- a replacement authority is published only after checkpoint restore and complete journal replay succeed;
+- failed checkpoint open does not consume an authority generation or publish replacement authority;
+- incomplete/gapped journal evidence is rejected before replacement authority is opened;
+- replay failure after checkpoint open withdraws the partially reconstructed authority;
+- accepted-operation sequence continuity survives recovery, while the replacement engine is free to restart its local `DocumentRevision` clock;
+- old asynchronous/render-style authority stamps remain rejected after recovery under the new generation;
+- ADR-0012 records recovery as **new ephemeral authority + preserved accepted-operation lineage**, not restoration of engine object identity;
+- ADR-0011's render lease model provides the corresponding data-plane rule: all unfinished render leases from a dead/replaced authority are invalid and may never publish into the recovered session.
 
-Remaining:
-- define explicit checkpoint/reopen lineage and reconciliation semantics;
-- prove application/session recovery rather than only process restartability;
-- prove stale asynchronous/render work from the dead authority cannot enter the recovered session.
+R0B implementation work:
+- bind the qualified state machine to persisted checkpoint artifacts and an on-disk accepted-operation journal;
+- qualify journal/checkpoint durability, batching, atomic replacement and crash/power-loss behavior without adding typing latency;
+- wire the session recovery state machine into the production worker supervisor and UI recovery surfaces;
+- garbage-collect superseded durable recovery artifacts only after a newer durable checkpoint/save boundary is proven safe.
 
 ## R0A.9 Compatibility harness
 
