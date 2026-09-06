@@ -1,17 +1,23 @@
 #include "writer_move_qualification_abi.hxx"
 #include "writer_semantics_module_abi.hxx"
 
+#include <com/sun/star/beans/PropertyValue.hpp>
 #include <com/sun/star/container/XEnumeration.hpp>
 #include <com/sun/star/container/XEnumerationAccess.hpp>
 #include <com/sun/star/frame/Desktop.hpp>
+#include <com/sun/star/frame/DispatchHelper.hpp>
+#include <com/sun/star/frame/XDispatchHelper.hpp>
+#include <com/sun/star/frame/XDispatchProvider.hpp>
+#include <com/sun/star/frame/XModel.hpp>
 #include <com/sun/star/lang/XComponent.hpp>
 #include <com/sun/star/text/XParagraphCursor.hpp>
 #include <com/sun/star/text/XText.hpp>
 #include <com/sun/star/text/XTextDocument.hpp>
-#include <com/sun/star/text/XTextRange.hpp>
-#include <com/sun/star/text/XTextRangeMover.hpp>
+#include <com/sun/star/text/XTextViewCursor.hpp>
+#include <com/sun/star/text/XTextViewCursorSupplier.hpp>
 #include <com/sun/star/uno/Exception.hpp>
 #include <com/sun/star/uno/Reference.hxx>
+#include <com/sun/star/uno/Sequence.hxx>
 #include <com/sun/star/uno/XComponentContext.hpp>
 #include <rtl/string.hxx>
 #include <rtl/textenc.h>
@@ -113,25 +119,52 @@ extern "C" int r0a_writer_semantics_move_first_paragraph_down(
             return r0a::kWriterSemanticStatusError;
         }
 
-        auto text = document->getText();
-        css::uno::Reference<css::text::XTextRangeMover> mover(
-            text, css::uno::UNO_QUERY_THROW);
-        css::uno::Reference<css::text::XParagraphCursor> firstParagraph(
-            text->createTextCursor(), css::uno::UNO_QUERY_THROW);
-        firstParagraph->gotoStart(false);
-        if (!firstParagraph->gotoEndOfParagraph(true))
+        // The published Text service lists XTextRangeMover as optional, but the
+        // pinned Writer 24.2 SwXBodyText does not expose that interface. Writer's
+        // ordinary text shell does, however, implement `.uno:MoveDown` as
+        // SwWrtShell::MoveParagraph(). Drive that genuine Writer paragraph-move
+        // command on the same live authority rather than falling back to a
+        // delete/insert simulation.
+        css::uno::Reference<css::frame::XModel> model(document, css::uno::UNO_QUERY_THROW);
+        auto controller = model->getCurrentController();
+        if (!controller.is())
         {
-            writeError(error, errorCapacity, "could not select first Writer paragraph for movement");
+            writeError(error, errorCapacity, "Writer model has no current controller");
             return r0a::kWriterSemanticStatusError;
         }
 
-        css::uno::Reference<css::text::XTextRange> range(
-            firstParagraph, css::uno::UNO_QUERY_THROW);
+        css::uno::Reference<css::text::XTextViewCursorSupplier> viewCursorSupplier(
+            controller, css::uno::UNO_QUERY_THROW);
+        css::uno::Reference<css::text::XTextViewCursor> viewCursor(
+            viewCursorSupplier->getViewCursor(), css::uno::UNO_QUERY_THROW);
 
-        // XTextRangeMover is the Writer-native semantic movement primitive. The
-        // qualification harness verifies the resulting paragraph order rather
-        // than treating successful dispatch alone as evidence of a move.
-        mover->moveTextRange(range, 1);
+        auto text = document->getText();
+        css::uno::Reference<css::text::XParagraphCursor> firstParagraph(
+            text->createTextCursor(), css::uno::UNO_QUERY_THROW);
+        firstParagraph->gotoStart(false);
+        viewCursor->gotoRange(firstParagraph->getStart(), false);
+
+        css::uno::Reference<css::frame::XDispatchProvider> dispatchProvider(
+            controller->getFrame(), css::uno::UNO_QUERY_THROW);
+        const auto context = comphelper::getProcessComponentContext();
+        if (!context.is())
+        {
+            writeError(error, errorCapacity, "LibreOffice process component context disappeared");
+            return r0a::kWriterSemanticStatusError;
+        }
+
+        css::uno::Reference<css::frame::XDispatchHelper> dispatchHelper(
+            css::frame::DispatchHelper::create(context), css::uno::UNO_SET_THROW);
+        const css::uno::Sequence<css::beans::PropertyValue> arguments;
+        dispatchHelper->executeDispatch(
+            dispatchProvider,
+            u".uno:MoveDown"_ustr,
+            rtl::OUString(),
+            0,
+            arguments);
+
+        // The caller deliberately verifies exact P1,P0,P2 semantics after this
+        // returns. A dispatch call by itself is never accepted as move evidence.
         return r0a::kWriterSemanticStatusOk;
     }
     catch (const css::uno::Exception& exception)
