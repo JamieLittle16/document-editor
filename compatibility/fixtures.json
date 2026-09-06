@@ -1,0 +1,21 @@
+{
+  "schema": "office.compatibility-manifest.v1",
+  "fixtures": [
+    {
+      "id": "writer-basic-text-prefix-roundtrip",
+      "generator": "writer-r0a-basic-v1",
+      "operation": "lok-r0a-prefix-edit-v1",
+      "projection": "docx-paragraph-text-v1",
+      "expected_before": [
+        "Document Editor LibreOfficeKit R0A probe",
+        "This fixture is generated deterministically in CI.",
+        "Stable semantic identity must be measured, not assumed."
+      ],
+      "expected_after": [
+        "R0A_EDIT_MARKER_7F3DDocument Editor LibreOfficeKit R0A probe",
+        "This fixture is generated deterministically in CI.",
+        "Stable semantic identity must be measured, not assumed."
+      ]
+    }
+  ]
+}

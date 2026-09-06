@@ -123,9 +123,24 @@ Remaining:
 
 **Outcome:** fixture manifest, open/edit/save/reopen pipeline, preservation/semantic assertions and artifact capture for later Word-oracle comparison.
 
-Status: **next practical implementation frontier**.
+Status: **first normalized compatibility vertical slice qualified**.
 
-Build this around normalized semantic assertions rather than binary-package equality. Reuse the existing deterministic DOCX generators and native semantic contracts instead of creating another parallel probe framework.
+Qualified evidence:
+- declarative `office.compatibility-manifest.v1` with strict schema admission;
+- registry-selected generators/operations/projections rather than executable manifest commands;
+- explicit `docx-paragraph-text-v1` normalization independent of ZIP bytes, OOXML paragraph IDs and Writer object identity;
+- bounded fixture count, semantic payload, DOCX size and execution time;
+- deterministic per-fixture input/round-trip/log/result artifacts plus run summary;
+- real LibreOffice generate -> open/edit/save/reopen -> normalized before/after assertions in mandatory native CI;
+- compatibility-generated artifacts are successfully reused by the specialist structural identity, insertion/deletion, formatting, restart and invalidation qualifications;
+- package SHA-256 values are diagnostic only, never semantic goldens;
+- manifest/projection unit tests run without LibreOffice in ordinary CI;
+- ADR-0010 records normalized product semantics as the compatibility definition.
+
+Remaining expansion is product breadth rather than harness architecture:
+- add focused versioned projections/fixtures for formatting, lists, tables, images and page/section layout as those surfaces enter implementation;
+- add an independent external oracle adapter when Word-oracle infrastructure is available;
+- avoid reintroducing one-off ordinary round-trip scripts when a fixture belongs in this harness.
 
 ## R0A.10 UI framework qualification
 
