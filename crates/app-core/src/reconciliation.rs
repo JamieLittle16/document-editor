@@ -6,9 +6,7 @@
 
 use std::fmt;
 
-use document_session::{
-    AcceptedOperationSequence, AuthorityGeneration, SessionAuthorityStamp,
-};
+use document_session::{AcceptedOperationSequence, AuthorityGeneration, SessionAuthorityStamp};
 
 /// Product-owned history lineage namespace.
 ///
@@ -293,10 +291,9 @@ impl<T> ReconciliationCandidate<T> {
         let source = prior.authority().authority_generation();
         let candidate = self.authority.authority_generation();
         if source != candidate {
-            return Err(ReconciliationEvidenceError::EngineContinuityCrossesAuthority {
-                source,
-                candidate,
-            });
+            return Err(
+                ReconciliationEvidenceError::EngineContinuityCrossesAuthority { source, candidate },
+            );
         }
         self.evidence.same_authority_engine_continuity = true;
         Ok(self)
@@ -415,9 +412,10 @@ pub fn reconcile_anchor<T: Clone>(
         return Ok(ReconciliationOutcome::Ambiguous);
     }
     if let Some((index, candidate)) = product_lineage.first().copied() {
-        let conflicting_engine_evidence = candidates.iter().enumerate().any(|(other_index, other)| {
-            other_index != index && other.evidence().same_authority_engine_continuity()
-        });
+        let conflicting_engine_evidence =
+            candidates.iter().enumerate().any(|(other_index, other)| {
+                other_index != index && other.evidence().same_authority_engine_continuity()
+            });
         if conflicting_engine_evidence {
             return Ok(ReconciliationOutcome::Ambiguous);
         }
@@ -527,7 +525,9 @@ mod tests {
     #[test]
     fn duplicate_semantics_are_ambiguous_without_structural_or_lineage_evidence() {
         let mut session = DocumentSession::new(MockDocumentEngine::default());
-        session.open_text_fixture(String::from("same\nsame")).unwrap();
+        session
+            .open_text_fixture(String::from("same\nsame"))
+            .unwrap();
         let authority = session.current_authority_stamp().unwrap();
         let anchor = anchor_fixture();
 
