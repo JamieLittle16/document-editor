@@ -25,9 +25,6 @@
 
 namespace css = com::sun::star;
 
-// Exact LibreOffice 24.2 processfactory.hxx signature. As with the main
-// semantic compatibility module, this version-specific dependency is confined
-// to an unloadable qualification object and never crosses into product code.
 namespace comphelper
 {
 css::uno::Reference<css::uno::XComponentContext> getProcessComponentContext();
@@ -36,13 +33,12 @@ css::uno::Reference<css::uno::XComponentContext> getProcessComponentContext();
 // ---------------------------------------------------------------------------
 // Pinned Writer 24.2 ABI surface
 // ---------------------------------------------------------------------------
-// These are deliberately declarations, not replicas of LibreOffice object
-// layouts. The qualification module never allocates, copies, dereferences
-// fields of, or exposes these types. It obtains the live SwXTextDocument via
-// Writer's XUnoTunnel and calls only exported methods. -Wl,-z,defs makes the
-// exact installed LibreOffice 24.2 library the authority for whether this ABI
-// surface exists.
-class SwDocShell;
+// These declarations intentionally contain no LibreOffice object layout. The
+// live implementation pointer comes from Writer's XUnoTunnel; every subsequent
+// operation is an exported method call. -Wl,-z,defs therefore makes the exact
+// installed 24.2 library the authority for whether this qualification bridge is
+// ABI-compatible.
+class SwDoc;
 class SwEditShell;
 struct Tag_SwNodeOffset;
 
@@ -68,10 +64,10 @@ class SwXTextDocument
 {
 public:
     static const css::uno::Sequence<sal_Int8>& getUnoTunnelId();
-    SwDocShell* GetDocShell();
+    SwDoc& GetDocOrThrow() const;
 };
 
-class SwDocShell
+class SwDoc
 {
 public:
     SwEditShell* GetEditShell();
@@ -194,25 +190,19 @@ extern "C" int r0a_writer_semantics_move_first_paragraph_down(
             return r0a::kWriterSemanticStatusError;
         }
 
-        SwDocShell* documentShell = implementation->GetDocShell();
-        if (documentShell == nullptr)
-        {
-            writeError(error, errorCapacity, "Writer implementation has no live SwDocShell");
-            return r0a::kWriterSemanticStatusError;
-        }
-
-        SwEditShell* editShell = documentShell->GetEditShell();
+        SwDoc& writerDocument = implementation->GetDocOrThrow();
+        SwEditShell* editShell = writerDocument.GetEditShell();
         if (editShell == nullptr)
         {
-            writeError(error, errorCapacity, "Writer SwDocShell has no live SwEditShell");
+            writeError(error, errorCapacity, "Writer SwDoc has no live SwEditShell");
             return r0a::kWriterSemanticStatusError;
         }
 
-        // The probe has already established a fresh deterministic document and
-        // the first paragraph as the active paragraph. This calls Writer's real
-        // core operation, whose implementation delegates to SwDoc::MoveParagraph
-        // and reports whether the move occurred. The caller then independently
-        // requires exact P1,P0,P2 semantics before accepting the observation.
+        // The fresh probe starts with its active cursor in deterministic P0.
+        // This is Writer's real core operation. Its implementation delegates to
+        // SwDoc::MoveParagraph and returns whether the document moved. The
+        // caller independently requires exact P1,P0,P2 semantics afterwards,
+        // so a true return value alone is never accepted as evidence.
         if (!editShell->MoveParagraph(SwNodeOffset(1)))
         {
             writeError(error, errorCapacity, "Writer core MoveParagraph(+1) rejected verified P0");
