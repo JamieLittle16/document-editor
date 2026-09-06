@@ -39,17 +39,18 @@ namespace comphelper
 css::uno::Reference<css::uno::XComponentContext> getProcessComponentContext();
 }
 
-// `Scheduler::ProcessEventsToIdle()` is VCL_DLLPUBLIC in LibreOffice, but the
-// distro SDK intentionally does not install the private VCL C++ headers. This
-// module is already version-pinned to LO 24.2, so bind that one exported Itanium
-// ABI symbol explicitly rather than copying private headers into Office. The
-// module links with `-Wl,-z,defs`, making the pinned symbol part of CI
-// qualification. Nothing about this symbol crosses the unloadable module ABI.
-extern "C" void r0aProcessLibreOfficeEventsToIdle()
-    __asm__("_ZN9Scheduler19ProcessEventsToIdleEv");
+// The distro SDK intentionally omits VCL's private C++ headers. This module is
+// already version-pinned to LO 24.2, so bind the one VCL operation needed for
+// bounded event completion by its exported Itanium ABI symbol instead of
+// copying private headers into Office. `-Wl,-z,defs` makes this dependency an
+// explicit native-CI qualification. It never crosses the unloadable module ABI.
+extern "C" bool r0aApplicationReschedule(bool handleAllCurrentEvents)
+    __asm__("_ZN11Application10RescheduleEb");
 
 namespace
 {
+constexpr std::size_t kDispatchRescheduleBudget = 4;
+
 std::string utf8(const rtl::OUString& value)
 {
     const rtl::OString encoded = rtl::OUStringToOString(value, RTL_TEXTENCODING_UTF8);
@@ -110,6 +111,21 @@ css::uno::Reference<css::text::XTextDocument> currentWriterDocument(std::string&
     }
 
     return found;
+}
+
+void completeDispatchEventsBoundedly()
+{
+    // MacrosTest::dispatchCommand() uses Scheduler::ProcessEventsToIdle(), which
+    // repeatedly calls Application::Reschedule(true). In a headless LOK process
+    // the full idle loop can remain live indefinitely because unrelated idles
+    // keep regenerating. A paragraph move only needs the command's queued UI
+    // work to run, so process a small fixed number of "all current events"
+    // batches. The caller still proves completion semantically as P1,P0,P2.
+    for (std::size_t batch = 0; batch < kDispatchRescheduleBudget; ++batch)
+    {
+        if (!r0aApplicationReschedule(true))
+            break;
+    }
 }
 } // namespace
 
@@ -172,14 +188,11 @@ extern "C" int r0a_writer_semantics_move_first_paragraph_down(
             0,
             arguments);
 
-        // LibreOffice's own MacrosTest::dispatchCommand() drains the VCL
-        // scheduler after executeDispatch before inspecting document state. Do
-        // exactly the same here: this is deterministic event completion, not a
-        // timing sleep or polling heuristic.
-        r0aProcessLibreOfficeEventsToIdle();
+        completeDispatchEventsBoundedly();
 
         // The caller deliberately verifies exact P1,P0,P2 semantics after this
-        // returns. A dispatch call by itself is never accepted as move evidence.
+        // returns. Dispatch plus event processing is never accepted as move
+        // evidence by itself.
         return r0a::kWriterSemanticStatusOk;
     }
     catch (const css::uno::Exception& exception)
