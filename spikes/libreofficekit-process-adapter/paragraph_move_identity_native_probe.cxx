@@ -230,11 +230,6 @@ int main(int argc, char* argv[])
     std::unique_ptr<r0a::WriterSemanticView> semanticView;
     void* qualificationLibrary = nullptr;
 
-    // This native qualification process is subject to the same pinned
-    // LibreOffice 24.2 process-global finalizer defect as the production adapter
-    // spike. Always destroy every object we own first, then preserve the intended
-    // exit status with process-level reclamation instead of entering the broken
-    // process-global static-finalizer phase.
     const auto finish = [&](int status, const std::string& message) {
         if (!message.empty())
             std::cerr << "native_move_probe_error=" << message << '\n';
@@ -270,22 +265,6 @@ int main(int argc, char* argv[])
         if (!semanticView)
             finish(1, "could not acquire same-authority Writer semantic view: " + semanticError);
 
-        const auto before = semanticView->identityProbeParagraphs(
-            kMaxParagraphs, kMaxIdentityBytes);
-        const auto beforeRepeat = semanticView->identityProbeParagraphs(
-            kMaxParagraphs, kMaxIdentityBytes);
-        if (!sameSnapshot(before, beforeRepeat))
-            finish(1, "baseline identity projection is not repeatable");
-        if (!hasExpectedTexts(before, kExpectedBefore))
-            finish(1, "baseline identity projection does not match deterministic fixture");
-        if (!hasUniqueProbeTokens(before))
-            finish(1, "baseline identity projection contains invalid or duplicate tokens");
-
-        const auto beforeSemantic = semanticView->paragraphs(
-            kMaxParagraphs, kMaxSemanticBytes);
-        if (!hasExpectedTexts(beforeSemantic, kExpectedBefore))
-            finish(1, "normal semantic projection disagrees with move baseline");
-
         qualificationLibrary = dlopen(modulePath, RTLD_NOW | RTLD_LOCAL);
         if (qualificationLibrary == nullptr)
         {
@@ -296,23 +275,54 @@ int main(int argc, char* argv[])
                     + (loaderError == nullptr ? "unknown dynamic-loader error" : loaderError));
         }
 
+        const auto prepareMoveContext = loadFunction<r0a::WriterPrepareParagraphMoveContextFn>(
+            qualificationLibrary,
+            "r0a_writer_semantics_prepare_paragraph_move_context");
         const auto moveFirstParagraphDown = loadFunction<r0a::WriterMoveFirstParagraphDownFn>(
             qualificationLibrary,
             "r0a_writer_semantics_move_first_paragraph_down");
-        std::array<char, kErrorBytes> moveError{};
-        const int moveStatus = moveFirstParagraphDown(moveError.data(), moveError.size());
+
+        std::array<char, kErrorBytes> operationError{};
+        const int prepareStatus = prepareMoveContext(operationError.data(), operationError.size());
+        if (prepareStatus != r0a::kWriterSemanticStatusOk)
+        {
+            finish(
+                1,
+                operationError[0] == '\0'
+                    ? "Writer paragraph move context preparation failed without an error message"
+                    : std::string(operationError.data()));
+        }
+
+        // Setup formatting is deliberately outside the measured identity
+        // relation. First prove it preserved the three semantic paragraphs, then
+        // establish the move baseline and only afterwards invoke MoveDown.
+        const auto preparedSemantic = semanticView->paragraphs(
+            kMaxParagraphs, kMaxSemanticBytes);
+        if (!hasExpectedTexts(preparedSemantic, kExpectedBefore))
+            finish(1, "list-context preparation changed deterministic paragraph text");
+
+        const auto before = semanticView->identityProbeParagraphs(
+            kMaxParagraphs, kMaxIdentityBytes);
+        const auto beforeRepeat = semanticView->identityProbeParagraphs(
+            kMaxParagraphs, kMaxIdentityBytes);
+        if (!sameSnapshot(before, beforeRepeat))
+            finish(1, "prepared baseline identity projection is not repeatable");
+        if (!hasExpectedTexts(before, kExpectedBefore))
+            finish(1, "prepared baseline identity projection does not match deterministic fixture");
+        if (!hasUniqueProbeTokens(before))
+            finish(1, "prepared baseline identity projection contains invalid or duplicate tokens");
+
+        operationError.fill('\0');
+        const int moveStatus = moveFirstParagraphDown(operationError.data(), operationError.size());
         if (moveStatus != r0a::kWriterSemanticStatusOk)
         {
             finish(
                 1,
-                moveError[0] == '\0'
+                operationError[0] == '\0'
                     ? "Writer-native paragraph move failed without an error message"
-                    : std::string(moveError.data()));
+                    : std::string(operationError.data()));
         }
 
-        // Successful dispatch is deliberately insufficient evidence. Observe and
-        // report the exact post-dispatch state even on mismatch, then keep the
-        // semantic acceptance criterion strict.
         const auto after = semanticView->identityProbeParagraphs(
             kMaxParagraphs, kMaxIdentityBytes);
         const auto afterRepeat = semanticView->identityProbeParagraphs(
@@ -336,6 +346,7 @@ int main(int argc, char* argv[])
         if (!hasExpectedTexts(afterSemantic, kExpectedAfter))
             finish(1, "normal semantic projection disagrees with post-move identity projection");
 
+        std::cout << "native_move_context=list\n";
         std::cout << "native_move_probe_repeatable=ok\n";
         std::cout << "native_move_semantic_order=P1-P0-P2\n";
         std::cout << "native_move_identity_status=observed\n";
