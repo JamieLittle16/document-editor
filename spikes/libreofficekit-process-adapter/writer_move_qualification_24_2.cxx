@@ -14,24 +14,28 @@
 #include <com/sun/star/frame/XStatusListener.hpp>
 #include <com/sun/star/lang/EventObject.hpp>
 #include <com/sun/star/lang/XComponent.hpp>
+#include <com/sun/star/lang/XEventListener.hpp>
 #include <com/sun/star/text/XParagraphCursor.hpp>
 #include <com/sun/star/text/XText.hpp>
 #include <com/sun/star/text/XTextDocument.hpp>
 #include <com/sun/star/text/XTextViewCursor.hpp>
 #include <com/sun/star/text/XTextViewCursorSupplier.hpp>
+#include <com/sun/star/uno/Any.hxx>
 #include <com/sun/star/uno/Exception.hpp>
 #include <com/sun/star/uno/Reference.hxx>
 #include <com/sun/star/uno/Sequence.hxx>
 #include <com/sun/star/uno/XComponentContext.hpp>
+#include <com/sun/star/uno/XInterface.hpp>
 #include <com/sun/star/util/URL.hpp>
 #include <com/sun/star/util/URLTransformer.hpp>
 #include <com/sun/star/util/XURLTransformer.hpp>
-#include <cppuhelper/implbase.hxx>
+#include <cppu/unotype.hxx>
 #include <rtl/string.hxx>
 #include <rtl/textenc.h>
 #include <rtl/ustring.hxx>
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <stdexcept>
@@ -145,9 +149,46 @@ void dispatchSynchronously(
         arguments);
 }
 
-class DispatchStateProbe final : public cppu::WeakImplHelper<css::frame::XStatusListener>
+// Qualification-only listener implemented directly against the generated UNO
+// interfaces. Ubuntu's LibreOffice 24.2 development packages intentionally do
+// not ship the source-tree cppuhelper/implbase.hxx convenience template, and
+// this probe should not acquire a private-header build dependency merely to
+// observe one Sfx dispatch state bit.
+class DispatchStateProbe final : public css::frame::XStatusListener
 {
 public:
+    css::uno::Any SAL_CALL queryInterface(const css::uno::Type& type) override
+    {
+        if (type == cppu::UnoType<css::frame::XStatusListener>::get())
+        {
+            return css::uno::Any(
+                css::uno::Reference<css::frame::XStatusListener>(this));
+        }
+        if (type == cppu::UnoType<css::lang::XEventListener>::get())
+        {
+            return css::uno::Any(
+                css::uno::Reference<css::lang::XEventListener>(this));
+        }
+        if (type == cppu::UnoType<css::uno::XInterface>::get())
+        {
+            return css::uno::Any(
+                css::uno::Reference<css::uno::XInterface>(
+                    static_cast<css::frame::XStatusListener*>(this)));
+        }
+        return {};
+    }
+
+    void SAL_CALL acquire() noexcept override
+    {
+        referenceCount_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void SAL_CALL release() noexcept override
+    {
+        if (referenceCount_.fetch_sub(1, std::memory_order_acq_rel) == 1)
+            delete this;
+    }
+
     void SAL_CALL statusChanged(const css::frame::FeatureStateEvent& event) override
     {
         received = true;
@@ -158,6 +199,9 @@ public:
 
     bool received = false;
     bool enabled = false;
+
+private:
+    std::atomic<sal_Int32> referenceCount_{0};
 };
 
 struct DispatchState
@@ -183,9 +227,10 @@ DispatchState queryDispatchState(
     if (!dispatch.is())
         return {};
 
-    rtl::Reference<DispatchStateProbe> probe = new DispatchStateProbe();
+    auto* rawProbe = new DispatchStateProbe();
+    css::uno::Reference<css::frame::XStatusListener> probe(rawProbe);
     dispatch->addStatusListener(probe, url);
-    const DispatchState state{true, probe->received, probe->enabled};
+    const DispatchState state{true, rawProbe->received, rawProbe->enabled};
     dispatch->removeStatusListener(probe, url);
     return state;
 }
