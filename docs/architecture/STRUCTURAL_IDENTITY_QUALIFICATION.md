@@ -1,18 +1,18 @@
 # R0A Writer Structural Identity Qualification
 
-Status: qualified engine evidence, not a production identity or history-anchor contract.
+Status: qualified engine evidence; product-owned durable-anchor policy is now recorded by ADR-0013.
 
 ## Question
 
 Before Office defines durable paragraph identities, history anchors, comment anchors or collaboration references, we need to know what identity continuity the bootstrap Writer engine actually preserves under edits.
 
-The qualification now asks three deliberately narrow questions inside one live Writer authority:
+The qualification asks three deliberately narrow questions inside one live Writer authority:
 
 1. which paragraph UNO objects survive an interior paragraph split followed by merge;
 2. which paragraph UNO objects survive insertion of an empty paragraph at an existing boundary followed by deletion of that inserted paragraph;
 3. which paragraph UNO objects survive a verified formatting-only paragraph mutation with no text or structural change.
 
-The result is evidence for a future reconciliation layer. It is not permission to expose UNO identity to product code.
+The result is engine evidence for reconciliation. It is not permission to expose UNO identity to product code.
 
 ## Reference environment
 
@@ -204,9 +204,9 @@ different/missing live Writer object
 
 Formatting-only mutation preserves all observed paragraph objects in the pinned engine, while two ordinary structural round trips replace an original paragraph object despite exact semantic restoration.
 
-Therefore Office must not define Git-like history, comments, collaboration anchors or durable selections as aliases of Writer object identity. The eventual identity/reconciliation layer should treat engine identity as one evidence channel among several, alongside transaction lineage, structural neighbourhood, semantic content and explicit product-owned identity where justified.
+Therefore Office must not define Git-like history, comments, collaboration anchors or durable selections as aliases of Writer object identity. ADR-0013 now freezes the corresponding product rule: durable `LogicalAnchorId` values are product-owned; live authority bindings are replaceable; reconciliation uses explicit product lineage first, same-authority native continuity as a positive local signal, and unique structural + semantic evidence as a fallback. Ambiguous or unresolved cases remain explicit rather than guessed.
 
-This is particularly important for history. Undo/redo, branch replay or crash recovery may restore equivalent semantics while the bootstrap engine chooses different internal objects. Product history must remain logically stable across that implementation choice.
+This is particularly important for history. Undo/redo, branch replay or crash recovery may restore equivalent semantics while the bootstrap engine chooses different internal objects. Product history remains logically stable across that implementation choice.
 
 ## CI contracts
 
@@ -223,6 +223,8 @@ Together they require:
 - exact semantic results for each qualification;
 - the independently reproduced identity relations above.
 
+Later R0A native qualification additionally covers duplicate-text ambiguity and identity-token scope across reopen/worker restart. The product-side `app-core::reconciliation` tests then require those facts to produce conservative durable-anchor behavior.
+
 CI deliberately does not pin:
 
 - numeric probe-token values;
@@ -230,25 +232,22 @@ CI deliberately does not pin:
 - object allocation order beyond the measured relations;
 - DOCX package bytes;
 - raster hashes;
-- any permanent product schema or formatting API.
+- a rich permanent paragraph/table/field locator schema.
 
-If a future LibreOffice version changes a relation, qualification should fail visibly. The result must then be re-measured and the reconciliation design reassessed rather than silently accepting changed engine behaviour.
+If a future LibreOffice version changes a relation, qualification should fail visibly. The result must then be re-measured and the reconciliation evidence adapters reassessed rather than silently accepting changed engine behaviour.
 
 ## What this unlocks
 
-The current evidence establishes two complementary invariants:
+The completed R0A evidence establishes four durable invariants:
 
 1. **semantic equivalence and engine-object identity are different dimensions**;
-2. **same-object equality is useful positive continuity evidence during a live session, but loss of equality is not a logical deletion signal**.
+2. **same-object equality is useful positive continuity evidence during one live authority, but loss of equality is not a logical deletion signal**;
+3. **native identity does not survive authority replacement as a product contract**;
+4. **durable logical identity belongs to Office and is rebound to current engine state through conservative evidence**.
 
-The next qualification sequence should cover:
+ADR-0013 and `app-core::reconciliation` are the first product contract built from that evidence. This is enough to let R0B history/recovery work depend on a stable identity/binding separation without waiting for a complete rich-document semantic schema.
 
-1. paragraph move/reorder;
-2. duplicate-text paragraphs to defeat naive content matching;
-3. save/reload and worker restart, where live UNO identity must not be assumed to survive;
-4. callback/invalidation ordering relative to semantic revision changes.
-
-Only after those measurements should Office freeze a product-owned paragraph/anchor reconciliation model and make the durable Git-like history store depend on it.
+Still intentionally unfrozen are the concrete persisted hint schema for richer structures, save-as/fork history-lineage policy, user-facing resolution of ambiguous anchors, and collaboration causality. Those can evolve above the durable identity primitive.
 
 ## Non-goals
 
