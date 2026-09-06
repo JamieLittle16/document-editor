@@ -16,8 +16,14 @@ slint = { version = "=1.17.1", default-features = false, features = [
 
 [workspace]
 
+# Slint's generated `slint!` output contains its own scoped
+# `allow(unsafe_code)`. Rust deliberately prevents that from overriding
+# `forbid`, even though this qualification crate itself contains no authored
+# unsafe blocks. Keep product crates at `forbid`; this isolated candidate
+# crate uses `deny` so generated framework internals can compile while any
+# unsafe code authored by Office remains an error.
 [lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
