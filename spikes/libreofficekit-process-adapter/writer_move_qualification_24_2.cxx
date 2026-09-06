@@ -6,9 +6,13 @@
 #include <com/sun/star/container/XEnumerationAccess.hpp>
 #include <com/sun/star/frame/Desktop.hpp>
 #include <com/sun/star/frame/DispatchHelper.hpp>
+#include <com/sun/star/frame/FeatureStateEvent.hpp>
+#include <com/sun/star/frame/XDispatch.hpp>
 #include <com/sun/star/frame/XDispatchHelper.hpp>
 #include <com/sun/star/frame/XDispatchProvider.hpp>
 #include <com/sun/star/frame/XModel.hpp>
+#include <com/sun/star/frame/XStatusListener.hpp>
+#include <com/sun/star/lang/EventObject.hpp>
 #include <com/sun/star/lang/XComponent.hpp>
 #include <com/sun/star/text/XParagraphCursor.hpp>
 #include <com/sun/star/text/XText.hpp>
@@ -19,6 +23,10 @@
 #include <com/sun/star/uno/Reference.hxx>
 #include <com/sun/star/uno/Sequence.hxx>
 #include <com/sun/star/uno/XComponentContext.hpp>
+#include <com/sun/star/util/URL.hpp>
+#include <com/sun/star/util/URLTransformer.hpp>
+#include <com/sun/star/util/XURLTransformer.hpp>
+#include <cppuhelper/implbase.hxx>
 #include <rtl/string.hxx>
 #include <rtl/textenc.h>
 #include <rtl/ustring.hxx>
@@ -136,6 +144,51 @@ void dispatchSynchronously(
         0,
         arguments);
 }
+
+class DispatchStateProbe final : public cppu::WeakImplHelper<css::frame::XStatusListener>
+{
+public:
+    void SAL_CALL statusChanged(const css::frame::FeatureStateEvent& event) override
+    {
+        received = true;
+        enabled = event.IsEnabled;
+    }
+
+    void SAL_CALL disposing(const css::lang::EventObject&) override {}
+
+    bool received = false;
+    bool enabled = false;
+};
+
+struct DispatchState
+{
+    bool present = false;
+    bool received = false;
+    bool enabled = false;
+};
+
+DispatchState queryDispatchState(
+    const css::uno::Reference<css::frame::XDispatchProvider>& provider,
+    const css::uno::Reference<css::uno::XComponentContext>& context,
+    const char* command)
+{
+    css::uno::Reference<css::util::XURLTransformer> transformer(
+        css::util::URLTransformer::create(context), css::uno::UNO_SET_THROW);
+    css::util::URL url;
+    url.Complete = rtl::OUString::createFromAscii(command);
+    transformer->parseStrict(url);
+
+    css::uno::Reference<css::frame::XDispatch> dispatch(
+        provider->queryDispatch(url, rtl::OUString(), 0), css::uno::UNO_QUERY);
+    if (!dispatch.is())
+        return {};
+
+    rtl::Reference<DispatchStateProbe> probe = new DispatchStateProbe();
+    dispatch->addStatusListener(probe, url);
+    const DispatchState state{true, probe->received, probe->enabled};
+    dispatch->removeStatusListener(probe, url);
+    return state;
+}
 } // namespace
 
 extern "C" int r0a_writer_semantics_move_first_paragraph_down(
@@ -153,12 +206,6 @@ extern "C" int r0a_writer_semantics_move_first_paragraph_down(
             return r0a::kWriterSemanticStatusError;
         }
 
-        // The published Text service lists XTextRangeMover as optional, but the
-        // pinned Writer 24.2 SwXBodyText does not expose that interface. Writer's
-        // ordinary text shell does implement `.uno:MoveDown` as
-        // SwWrtShell::MoveParagraph(). Use Writer commands for both cursor
-        // placement and movement so the experiment measures that genuine shell
-        // operation rather than mixing a UNO text cursor with UI-shell state.
         css::uno::Reference<css::frame::XModel> model(document, css::uno::UNO_QUERY_THROW);
         auto controller = model->getCurrentController();
         if (!controller.is())
@@ -179,10 +226,9 @@ extern "C" int r0a_writer_semantics_move_first_paragraph_down(
         css::uno::Reference<css::frame::XDispatchHelper> dispatchHelper(
             css::frame::DispatchHelper::create(context), css::uno::UNO_SET_THROW);
 
-        // DispatchHelper adds SynchronMode=true and waits for notification when
-        // the dispatch supports it. Do not touch Scheduler/Application here:
-        // event-loop completion is neither needed nor safe in this headless
-        // qualification process.
+        // Use the Writer shell itself to put the UI cursor at document start,
+        // then verify the semantic paragraph under that cursor before interpreting
+        // any move result.
         dispatchSynchronously(dispatchHelper, dispatchProvider, ".uno:GoToStartOfDoc");
 
         const std::string currentParagraph = paragraphAtViewCursor(document, model);
@@ -196,6 +242,30 @@ extern "C" int r0a_writer_semantics_move_first_paragraph_down(
             return r0a::kWriterSemanticStatusError;
         }
 
+        // A disabled Sfx slot can still resolve to an XDispatch and turn a
+        // synchronous dispatch into a clean no-op. Observe the command's real
+        // frame state before invoking it so CI distinguishes command ineligibility
+        // from mutation semantics.
+        const DispatchState moveState = queryDispatchState(
+            dispatchProvider, context, ".uno:MoveDown");
+        if (!moveState.present)
+        {
+            writeError(error, errorCapacity, "Writer frame exposes no .uno:MoveDown dispatch");
+            return r0a::kWriterSemanticStatusError;
+        }
+        if (!moveState.received)
+        {
+            writeError(error, errorCapacity, "Writer .uno:MoveDown dispatch returned no status event");
+            return r0a::kWriterSemanticStatusError;
+        }
+        if (!moveState.enabled)
+        {
+            writeError(error, errorCapacity, "Writer .uno:MoveDown dispatch is disabled at verified P0");
+            return r0a::kWriterSemanticStatusError;
+        }
+
+        // DispatchHelper forces SynchronMode=true and waits for notification when
+        // supported. No VCL scheduler/event-loop pumping is used here.
         dispatchSynchronously(dispatchHelper, dispatchProvider, ".uno:MoveDown");
 
         // The caller deliberately verifies exact P1,P0,P2 semantics after this
