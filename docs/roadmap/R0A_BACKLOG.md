@@ -170,9 +170,31 @@ Remaining expansion is product breadth rather than harness architecture:
 
 **Outcome:** small prototype exercising native windowing, IME/text input, accessibility tree, scroll/viewport composition, menus/clipboard and high DPI.
 
-Status: **not yet frozen; Slint remains a candidate, not a decision**.
+Status: **first Slint viability slice qualified; production framework remains deliberately unfrozen**.
 
-Decision produces/supersedes ADR-0005.
+Qualified evidence:
+- Slint 1.17.1 candidate is isolated under `spikes/` with Rust 1.92; Office product crates remain on Rust 1.85;
+- the editor-shaped candidate compiles and tests on Ubuntu, Windows and macOS;
+- Ubuntu also passes candidate fmt and pedantic clippy with `-D warnings`;
+- real Linux Winit/software window creation succeeds under Xvfb at forced 1× and 2× scale factors;
+- the 1× native window reports `1100x800`, while the 2× native window reports `2200x1600`;
+- both DPI runs preserve the exact 262,144-byte caller-owned raster and deterministic checksum used by the UI qualification workload;
+- accessibility support is enabled in the native candidate and explicit landmarks/IDs compile across the target platforms;
+- Linux qualification exposed explicit fontconfig and XKB/X11 packaging dependencies, now declared in CI;
+- Slint-generated Rust cannot live beneath a crate-level `forbid(unsafe_code)` because generated code scopes its own allowance; only the isolated candidate crate uses `unsafe_code = "deny"`, while Office product crates remain `forbid`;
+- changing forced `SLINT_SCALE_FACTOR` requires recompiling the candidate crate because Slint compiler passes and the Winit backend both consume scale information;
+- the ordinary Office Rust 1.85 and full native LibreOffice qualification gates remain green with the candidate quarantined.
+
+This is a **viability result, not a selection**. ADR-0005 remains normative.
+
+Remaining selection evidence:
+1. exercise real-platform IME/international input on Windows, macOS and Linux;
+2. exercise actual screen-reader/accessibility-tree behavior, including large/virtualized UI focus;
+3. make clipboard, drag/drop, native file-dialog and menu integration explicit;
+4. measure large document viewport composition, scrolling, resizing and zoom behavior sufficiently to reject obvious jank;
+5. close packaging/licensing/toolchain questions, including the long-term Rust MSRV and Slint attribution route;
+6. compare against at least the strongest control alternative if any unresolved Slint limitation remains material;
+7. supersede ADR-0005 only after the framework decision is justified by this evidence.
 
 ## R0A exit gate
 
