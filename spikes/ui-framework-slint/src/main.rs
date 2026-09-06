@@ -175,7 +175,9 @@ fn qualification_tile() -> SharedPixelBuffer<Rgba8Pixel> {
     for y in 0..TILE_HEIGHT {
         for x in 0..TILE_WIDTH {
             let index = ((y * TILE_WIDTH + x) * 4) as usize;
-            let margin = x < 18 || x >= TILE_WIDTH - 18 || y < 18 || y >= TILE_HEIGHT - 18;
+            let in_page_body_x = (18..TILE_WIDTH - 18).contains(&x);
+            let in_page_body_y = (18..TILE_HEIGHT - 18).contains(&y);
+            let margin = !(in_page_body_x && in_page_body_y);
             let text_rule = !margin && y >= 42 && (y - 42) % 24 < 2 && x < 210;
             let rgba = if margin {
                 [244, 244, 244, 255]
