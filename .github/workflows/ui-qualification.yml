@@ -65,6 +65,7 @@ jobs:
             OFFICE_UI_QUALIFY_ONCE=1 \
             SLINT_BACKEND=winit-software \
             SLINT_SCALE_FACTOR=1 \
+            CARGO_TARGET_DIR="$RUNNER_TEMP/office-slint-1x" \
             cargo run --quiet | tee /tmp/office-slint-1x.log
           grep -Fx 'ui_framework=slint-1.17.1' /tmp/office-slint-1x.log
           grep -Fx 'ui_backend=winit-software' /tmp/office-slint-1x.log
@@ -79,6 +80,7 @@ jobs:
             OFFICE_UI_QUALIFY_ONCE=1 \
             SLINT_BACKEND=winit-software \
             SLINT_SCALE_FACTOR=2 \
+            CARGO_TARGET_DIR="$RUNNER_TEMP/office-slint-2x" \
             cargo run --quiet | tee /tmp/office-slint-2x.log
           grep -Fx 'ui_scale_factor=2' /tmp/office-slint-2x.log
           grep -Fx 'ui_tile_bytes=262144' /tmp/office-slint-2x.log
