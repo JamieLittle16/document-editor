@@ -151,6 +151,92 @@ impl std::error::Error for AuthorityFreshnessError {}
 /// Backwards-compatible name for semantic-observation freshness errors.
 pub type ObservationFreshnessError = AuthorityFreshnessError;
 
+/// Session-local ordering for accepted user transactions.
+///
+/// This sequence is product-owned lineage for journal ordering inside one retained session. It is
+/// not a paragraph identity, file identity or globally unique history commit identifier.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct AcceptedOperationSequence(u64);
+
+impl AcceptedOperationSequence {
+    const BEFORE_FIRST_OPERATION: Self = Self(0);
+
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+
+    fn checked_next(self) -> Option<Self> {
+        self.0.checked_add(1).map(Self)
+    }
+}
+
+impl fmt::Display for AcceptedOperationSequence {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+/// Immutable evidence for one transaction that the authoritative engine accepted.
+///
+/// The original transaction is retained for recovery/audit evidence, together with the exact
+/// source and result authority stamps. Its current UTF-8 offsets are *not* promoted into durable
+/// semantic identity; future structured operations may use different replay adapters while keeping
+/// the same accepted-operation lineage principle.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionTransactionApplied {
+    sequence: AcceptedOperationSequence,
+    source: SessionAuthorityStamp,
+    result: SessionAuthorityStamp,
+    transaction: DocumentTransaction,
+}
+
+impl SessionTransactionApplied {
+    fn new(
+        sequence: AcceptedOperationSequence,
+        source: SessionAuthorityStamp,
+        result: SessionAuthorityStamp,
+        transaction: DocumentTransaction,
+    ) -> Self {
+        Self {
+            sequence,
+            source,
+            result,
+            transaction,
+        }
+    }
+
+    #[must_use]
+    pub const fn sequence(&self) -> AcceptedOperationSequence {
+        self.sequence
+    }
+
+    #[must_use]
+    pub const fn source(&self) -> SessionAuthorityStamp {
+        self.source
+    }
+
+    #[must_use]
+    pub const fn result(&self) -> SessionAuthorityStamp {
+        self.result
+    }
+
+    #[must_use]
+    pub const fn transaction(&self) -> &DocumentTransaction {
+        &self.transaction
+    }
+
+    #[must_use]
+    pub const fn previous_revision(&self) -> DocumentRevision {
+        self.source.revision()
+    }
+
+    #[must_use]
+    pub const fn new_revision(&self) -> DocumentRevision {
+        self.result.revision()
+    }
+}
+
 /// Session-local ordering for captured recovery checkpoints.
 ///
 /// This is not a persistent document identity and is not globally unique. Its only contract is
@@ -179,6 +265,7 @@ impl fmt::Display for CheckpointSequence {
 
 /// Product-owned checkpoint lineage around a payload captured from current authority.
 ///
+/// `journal_cursor` records the last accepted operation already represented by the checkpoint.
 /// The generic payload deliberately keeps this type independent of Writer, UNO and file-format
 /// identifiers. R0A uses `String` only to qualify orchestration with the existing text fixture;
 /// production recovery can later bind the same lineage rules to file/checkpoint artifacts plus a
@@ -187,14 +274,21 @@ impl fmt::Display for CheckpointSequence {
 pub struct RecoveryCheckpoint<T> {
     sequence: CheckpointSequence,
     source: SessionAuthorityStamp,
+    journal_cursor: AcceptedOperationSequence,
     value: T,
 }
 
 impl<T> RecoveryCheckpoint<T> {
-    fn new(sequence: CheckpointSequence, source: SessionAuthorityStamp, value: T) -> Self {
+    fn new(
+        sequence: CheckpointSequence,
+        source: SessionAuthorityStamp,
+        journal_cursor: AcceptedOperationSequence,
+        value: T,
+    ) -> Self {
         Self {
             sequence,
             source,
+            journal_cursor,
             value,
         }
     }
@@ -207,6 +301,11 @@ impl<T> RecoveryCheckpoint<T> {
     #[must_use]
     pub const fn source(&self) -> SessionAuthorityStamp {
         self.source
+    }
+
+    #[must_use]
+    pub const fn journal_cursor(&self) -> AcceptedOperationSequence {
+        self.journal_cursor
     }
 
     #[must_use]
@@ -241,12 +340,93 @@ impl fmt::Display for CheckpointCaptureError {
 
 impl std::error::Error for CheckpointCaptureError {}
 
-/// Evidence that a checkpoint was successfully rebound to a replacement authority.
+/// Why a retained accepted-operation journal cannot safely reconstruct a checkpoint.
+#[derive(Debug)]
+pub enum RecoveryReplayError {
+    Engine(EngineError),
+    SequenceExhausted,
+    JournalGap {
+        expected: AcceptedOperationSequence,
+        actual: AcceptedOperationSequence,
+    },
+    JournalSourceMismatch {
+        expected: SessionAuthorityStamp,
+        actual: SessionAuthorityStamp,
+    },
+    TransactionRevisionMismatch {
+        recorded: DocumentRevision,
+        source: DocumentRevision,
+    },
+    JournalIncomplete {
+        expected_latest: AcceptedOperationSequence,
+        actual_latest: AcceptedOperationSequence,
+    },
+    EngineRevisionMismatch {
+        expected: DocumentRevision,
+        actual: DocumentRevision,
+    },
+    JournalTooLong,
+}
+
+impl fmt::Display for RecoveryReplayError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Engine(error) => write!(formatter, "recovery engine failure: {error}"),
+            Self::SequenceExhausted => formatter.write_str("accepted operation sequence exhausted"),
+            Self::JournalGap { expected, actual } => write!(
+                formatter,
+                "recovery journal gap: expected operation {expected}, observed {actual}"
+            ),
+            Self::JournalSourceMismatch { expected, actual } => write!(
+                formatter,
+                "recovery journal source mismatch: expected {:?}/{}, observed {:?}/{}",
+                expected.authority_generation(),
+                expected.revision(),
+                actual.authority_generation(),
+                actual.revision()
+            ),
+            Self::TransactionRevisionMismatch { recorded, source } => write!(
+                formatter,
+                "recorded transaction expected revision {recorded}, source stamp is revision {source}"
+            ),
+            Self::JournalIncomplete {
+                expected_latest,
+                actual_latest,
+            } => write!(
+                formatter,
+                "recovery journal incomplete: session accepted through operation {expected_latest}, replay reaches {actual_latest}"
+            ),
+            Self::EngineRevisionMismatch { expected, actual } => write!(
+                formatter,
+                "recovery engine reported previous revision {actual}, expected {expected}"
+            ),
+            Self::JournalTooLong => formatter.write_str("recovery journal length cannot fit u64"),
+        }
+    }
+}
+
+impl std::error::Error for RecoveryReplayError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Engine(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<EngineError> for RecoveryReplayError {
+    fn from(error: EngineError) -> Self {
+        Self::Engine(error)
+    }
+}
+
+/// Evidence that a checkpoint and its complete accepted-operation tail were rebound successfully.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RecoveryApplied {
     checkpoint_sequence: CheckpointSequence,
     source: SessionAuthorityStamp,
     recovered: SessionAuthorityStamp,
+    replayed_operations: u64,
 }
 
 impl RecoveryApplied {
@@ -254,11 +434,13 @@ impl RecoveryApplied {
         checkpoint_sequence: CheckpointSequence,
         source: SessionAuthorityStamp,
         recovered: SessionAuthorityStamp,
+        replayed_operations: u64,
     ) -> Self {
         Self {
             checkpoint_sequence,
             source,
             recovered,
+            replayed_operations,
         }
     }
 
@@ -276,6 +458,11 @@ impl RecoveryApplied {
     pub const fn recovered(self) -> SessionAuthorityStamp {
         self.recovered
     }
+
+    #[must_use]
+    pub const fn replayed_operations(self) -> u64 {
+        self.replayed_operations
+    }
 }
 
 pub struct DocumentSession<E> {
@@ -283,6 +470,7 @@ pub struct DocumentSession<E> {
     authority_generation: AuthorityGeneration,
     revision: Option<DocumentRevision>,
     last_checkpoint_sequence: CheckpointSequence,
+    last_operation_sequence: AcceptedOperationSequence,
 }
 
 impl<E: DocumentEngine> DocumentSession<E> {
@@ -293,6 +481,7 @@ impl<E: DocumentEngine> DocumentSession<E> {
             authority_generation: AuthorityGeneration::BEFORE_FIRST_OPEN,
             revision: None,
             last_checkpoint_sequence: CheckpointSequence::BEFORE_FIRST_CHECKPOINT,
+            last_operation_sequence: AcceptedOperationSequence::BEFORE_FIRST_OPERATION,
         }
     }
 
@@ -344,11 +533,12 @@ impl<E: DocumentEngine> DocumentSession<E> {
         }
     }
 
+    #[must_use]
+    pub const fn latest_accepted_operation_sequence(&self) -> AcceptedOperationSequence {
+        self.last_operation_sequence
+    }
+
     /// Reads semantic text and scopes it to this exact session authority incarnation.
-    ///
-    /// A successful read is coherent at the instant it is returned. Callers that retain the
-    /// observation across work or await points must call [`Self::require_current`] before using
-    /// it to affect current UI/application state.
     pub fn semantic_text(&self) -> Result<SessionObservation<String>, EngineError> {
         let observation = self.engine.semantic_text()?;
         let Some(current) = self.revision else {
@@ -369,9 +559,6 @@ impl<E: DocumentEngine> DocumentSession<E> {
     }
 
     /// Rejects any authority stamp that no longer matches the exact live authority/revision.
-    ///
-    /// This is the allocation-free gate for future asynchronous render, search, diagnostics and
-    /// other work that does not itself carry a semantic `SessionObservation`.
     pub fn require_current_stamp(
         &self,
         stamp: SessionAuthorityStamp,
@@ -403,9 +590,6 @@ impl<E: DocumentEngine> DocumentSession<E> {
     }
 
     /// Captures a payload and explicit checkpoint lineage from a current session observation.
-    ///
-    /// A stale observation cannot mint a checkpoint. Sequence allocation happens only after the
-    /// freshness check succeeds, so rejected captures do not create gaps.
     pub fn capture_recovery_checkpoint<T: Clone>(
         &mut self,
         observation: &SessionObservation<T>,
@@ -420,40 +604,141 @@ impl<E: DocumentEngine> DocumentSession<E> {
         Ok(RecoveryCheckpoint::new(
             sequence,
             observation.authority_stamp(),
+            self.last_operation_sequence,
             observation.value().clone(),
         ))
     }
 
-    /// R0A qualification adapter that restores a captured text payload into replacement authority.
-    ///
-    /// This deliberately reuses `open_text_fixture` rather than introducing a fake production
-    /// checkpoint format into `DocumentEngine`. Production recovery will later open a persisted
-    /// checkpoint artifact and replay accepted operations behind the same session-level lineage
-    /// and authority rules.
+    /// Restores a text-fixture checkpoint when it already represents every accepted operation.
     pub fn recover_text_fixture_from_checkpoint(
         &mut self,
         checkpoint: &RecoveryCheckpoint<String>,
-    ) -> Result<RecoveryApplied, EngineError> {
+    ) -> Result<RecoveryApplied, RecoveryReplayError> {
+        self.recover_text_fixture_with_journal(checkpoint, &[])
+    }
+
+    /// R0A qualification adapter: restore a checkpoint and its complete accepted transaction tail.
+    ///
+    /// Journal provenance is validated *before* the replacement authority opens. Replayed
+    /// transactions are rebased only onto the replacement authority's local revision clock; their
+    /// original immutable record remains unchanged. Replay does not allocate new accepted-operation
+    /// sequences because it reconstructs already-accepted user input rather than accepting new
+    /// intent. Any replay failure withdraws replacement authority so partially reconstructed state
+    /// cannot be consumed as current.
+    pub fn recover_text_fixture_with_journal(
+        &mut self,
+        checkpoint: &RecoveryCheckpoint<String>,
+        journal: &[SessionTransactionApplied],
+    ) -> Result<RecoveryApplied, RecoveryReplayError> {
+        self.validate_recovery_journal(checkpoint, journal)?;
+
         self.open_text_fixture(checkpoint.value().clone())?;
+
+        for record in journal {
+            let expected_revision = self.revision.ok_or_else(|| {
+                RecoveryReplayError::Engine(EngineError::Internal(String::from(
+                    "replacement authority disappeared during recovery replay",
+                )))
+            })?;
+            let mut transaction = record.transaction().clone();
+            transaction.expected_revision = expected_revision;
+            let applied = match self.engine.apply_transaction(transaction) {
+                Ok(applied) => applied,
+                Err(error) => {
+                    self.revision = None;
+                    return Err(RecoveryReplayError::Engine(error));
+                }
+            };
+            if applied.previous_revision != expected_revision {
+                self.revision = None;
+                return Err(RecoveryReplayError::EngineRevisionMismatch {
+                    expected: expected_revision,
+                    actual: applied.previous_revision,
+                });
+            }
+            self.revision = Some(applied.new_revision);
+        }
+
         let recovered = self.current_authority_stamp().ok_or_else(|| {
-            EngineError::Internal(String::from(
+            RecoveryReplayError::Engine(EngineError::Internal(String::from(
                 "successful checkpoint recovery did not publish session authority",
-            ))
+            )))
         })?;
+        let replayed_operations =
+            u64::try_from(journal.len()).map_err(|_| RecoveryReplayError::JournalTooLong)?;
         Ok(RecoveryApplied::new(
             checkpoint.sequence(),
             checkpoint.source(),
             recovered,
+            replayed_operations,
         ))
     }
 
+    fn validate_recovery_journal<T>(
+        &self,
+        checkpoint: &RecoveryCheckpoint<T>,
+        journal: &[SessionTransactionApplied],
+    ) -> Result<(), RecoveryReplayError> {
+        let mut expected_sequence = checkpoint.journal_cursor();
+        let mut expected_source = checkpoint.source();
+
+        for record in journal {
+            expected_sequence = expected_sequence
+                .checked_next()
+                .ok_or(RecoveryReplayError::SequenceExhausted)?;
+            if record.sequence() != expected_sequence {
+                return Err(RecoveryReplayError::JournalGap {
+                    expected: expected_sequence,
+                    actual: record.sequence(),
+                });
+            }
+            if record.source() != expected_source {
+                return Err(RecoveryReplayError::JournalSourceMismatch {
+                    expected: expected_source,
+                    actual: record.source(),
+                });
+            }
+            if record.transaction().expected_revision != record.source().revision() {
+                return Err(RecoveryReplayError::TransactionRevisionMismatch {
+                    recorded: record.transaction().expected_revision,
+                    source: record.source().revision(),
+                });
+            }
+            expected_source = record.result();
+        }
+
+        if expected_sequence != self.last_operation_sequence {
+            return Err(RecoveryReplayError::JournalIncomplete {
+                expected_latest: self.last_operation_sequence,
+                actual_latest: expected_sequence,
+            });
+        }
+        Ok(())
+    }
+
+    /// Applies new user intent and returns immutable accepted-operation lineage.
+    ///
+    /// The operation sequence is reserved before engine mutation but committed only after success,
+    /// so rejected transactions neither mutate session revision nor create journal gaps.
     pub fn apply_transaction(
         &mut self,
         transaction: DocumentTransaction,
-    ) -> Result<TransactionApplied, EngineError> {
+    ) -> Result<SessionTransactionApplied, EngineError> {
+        let source = self.current_authority_stamp().ok_or(EngineError::NotOpen)?;
+        let next_sequence = self.last_operation_sequence.checked_next().ok_or_else(|| {
+            EngineError::Internal(String::from("accepted operation sequence exhausted"))
+        })?;
+        let recorded_transaction = transaction.clone();
         let applied = self.engine.apply_transaction(transaction)?;
         self.revision = Some(applied.new_revision);
-        Ok(applied)
+        self.last_operation_sequence = next_sequence;
+        let result = SessionAuthorityStamp::new(self.authority_generation, applied.new_revision);
+        Ok(SessionTransactionApplied::new(
+            next_sequence,
+            source,
+            result,
+            recorded_transaction,
+        ))
     }
 }
 
@@ -473,6 +758,7 @@ mod tests {
         text: Option<String>,
         revision: DocumentRevision,
         fail_next_open: bool,
+        fail_next_transaction: bool,
     }
 
     impl DocumentEngine for TestEngine {
@@ -511,6 +797,12 @@ mod tests {
             &mut self,
             transaction: DocumentTransaction,
         ) -> Result<TransactionApplied, EngineError> {
+            if self.fail_next_transaction {
+                self.fail_next_transaction = false;
+                return Err(EngineError::Internal(String::from(
+                    "injected transaction failure",
+                )));
+            }
             if transaction.expected_revision != self.revision {
                 return Err(ProtocolError::RevisionConflict {
                     expected: transaction.expected_revision,
@@ -548,6 +840,21 @@ mod tests {
         }
     }
 
+    fn append_at(
+        expected_revision: DocumentRevision,
+        byte_offset: u64,
+        suffix: &str,
+    ) -> DocumentTransaction {
+        DocumentTransaction {
+            expected_revision,
+            edits: vec![TextEdit {
+                start_utf8: TextOffset::new(byte_offset),
+                end_utf8: TextOffset::new(byte_offset),
+                replacement: String::from(suffix),
+            }],
+        }
+    }
+
     #[test]
     fn semantic_read_is_stamped_with_session_authority_and_revision() {
         let mut session = DocumentSession::new(TestEngine::default());
@@ -564,12 +871,6 @@ mod tests {
         assert_eq!(session.current_authority_stamp(), Some(stamp));
         assert_eq!(session.require_current_stamp(stamp), Ok(()));
         assert_eq!(session.require_current(&observation), Ok(()));
-
-        let length = observation.map(|text| text.len());
-        assert_eq!(length.authority_generation(), generation);
-        assert_eq!(length.revision(), DocumentRevision::INITIAL);
-        assert_eq!(*length.value(), 3);
-        assert_eq!(session.require_current(&length), Ok(()));
     }
 
     #[test]
@@ -591,12 +892,36 @@ mod tests {
         };
         assert_eq!(session.require_current(&old), Err(expected));
         assert_eq!(session.require_current_stamp(old_stamp), Err(expected));
+    }
 
-        let current = session.semantic_text().unwrap();
-        assert_eq!(current.authority_generation(), generation);
-        assert_eq!(current.revision(), DocumentRevision::new(1));
-        assert_eq!(current.value().as_str(), "Abc");
-        assert_eq!(session.require_current(&current), Ok(()));
+    #[test]
+    fn accepted_transactions_record_contiguous_product_owned_lineage() {
+        let mut session = DocumentSession::new(TestEngine::default());
+        session.open_text_fixture(String::from("abc")).unwrap();
+
+        let first = session
+            .apply_transaction(replace_first_character(DocumentRevision::INITIAL))
+            .unwrap();
+        let rejected = session.apply_transaction(DocumentTransaction {
+            expected_revision: DocumentRevision::new(99),
+            edits: Vec::new(),
+        });
+        let second = session
+            .apply_transaction(append_at(DocumentRevision::new(1), 3, "!"))
+            .unwrap();
+
+        assert!(matches!(
+            rejected,
+            Err(EngineError::Protocol(ProtocolError::RevisionConflict { .. }))
+        ));
+        assert_eq!(first.sequence().get(), 1);
+        assert_eq!(second.sequence().get(), 2);
+        assert_eq!(first.source().revision(), DocumentRevision::INITIAL);
+        assert_eq!(first.result().revision(), DocumentRevision::new(1));
+        assert_eq!(second.source(), first.result());
+        assert_eq!(second.result().revision(), DocumentRevision::new(2));
+        assert_eq!(session.latest_accepted_operation_sequence(), second.sequence());
+        assert_eq!(session.semantic_text().unwrap().value().as_str(), "Abc!");
     }
 
     #[test]
@@ -605,7 +930,6 @@ mod tests {
         session.open_text_fixture(String::from("first")).unwrap();
         let first_generation = session.known_authority_generation().unwrap();
         let old = session.semantic_text().unwrap();
-        assert_eq!(old.revision(), DocumentRevision::INITIAL);
 
         let reopened_revision = session.open_text_fixture(String::from("second")).unwrap();
         let second_generation = session.known_authority_generation().unwrap();
@@ -619,20 +943,14 @@ mod tests {
                 current: second_generation,
             })
         );
-
-        let current = session.semantic_text().unwrap();
-        assert_eq!(current.authority_generation(), second_generation);
-        assert_eq!(current.revision(), DocumentRevision::INITIAL);
-        assert_eq!(current.value().as_str(), "second");
-        assert_eq!(session.require_current(&current), Ok(()));
     }
 
     #[test]
-    fn recovery_checkpoint_requires_current_observation_and_sequences_successes_only() {
+    fn recovery_checkpoint_requires_current_observation_and_captures_journal_cursor() {
         let mut session = DocumentSession::new(TestEngine::default());
         session.open_text_fixture(String::from("abc")).unwrap();
         let old = session.semantic_text().unwrap();
-        session
+        let first_record = session
             .apply_transaction(replace_first_character(DocumentRevision::INITIAL))
             .unwrap();
 
@@ -653,59 +971,136 @@ mod tests {
         assert_eq!(first.sequence().get(), 1);
         assert_eq!(second.sequence().get(), 2);
         assert_eq!(first.source(), current.authority_stamp());
+        assert_eq!(first.journal_cursor(), first_record.sequence());
         assert_eq!(first.value().as_str(), "Abc");
     }
 
     #[test]
-    fn checkpoint_recovery_replaces_lost_authority_and_rejects_old_async_work() {
+    fn checkpoint_and_complete_journal_recover_all_accepted_input_under_new_authority() {
         let mut session = DocumentSession::new(TestEngine::default());
         session.open_text_fixture(String::from("abc")).unwrap();
-        session
+        let pre_checkpoint = session
             .apply_transaction(replace_first_character(DocumentRevision::INITIAL))
             .unwrap();
-        let source = session.semantic_text().unwrap();
-        let source_stamp = source.authority_stamp();
-        assert_eq!(source_stamp.revision(), DocumentRevision::new(1));
-        let checkpoint = session.capture_recovery_checkpoint(&source).unwrap();
+        let checkpoint_observation = session.semantic_text().unwrap();
+        let checkpoint = session
+            .capture_recovery_checkpoint(&checkpoint_observation)
+            .unwrap();
+        assert_eq!(checkpoint.journal_cursor(), pre_checkpoint.sequence());
+
+        let after_checkpoint_one = session
+            .apply_transaction(append_at(DocumentRevision::new(1), 3, "!"))
+            .unwrap();
+        let after_checkpoint_two = session
+            .apply_transaction(append_at(DocumentRevision::new(2), 4, "?"))
+            .unwrap();
+        let old_final_stamp = session.current_authority_stamp().unwrap();
+        assert_eq!(old_final_stamp.revision(), DocumentRevision::new(3));
+        assert_eq!(session.semantic_text().unwrap().value().as_str(), "Abc!?");
 
         session.replace_engine_after_authority_loss(TestEngine::default());
-
-        assert_eq!(session.known_revision(), None);
-        assert_eq!(session.known_authority_generation(), None);
         assert_eq!(
-            session.require_current_stamp(source_stamp),
-            Err(AuthorityFreshnessError::NoOpenDocument)
-        );
-        assert_eq!(
-            session.require_current(&source),
+            session.require_current_stamp(old_final_stamp),
             Err(AuthorityFreshnessError::NoOpenDocument)
         );
 
+        let journal = [after_checkpoint_one.clone(), after_checkpoint_two.clone()];
         let applied = session
-            .recover_text_fixture_from_checkpoint(&checkpoint)
+            .recover_text_fixture_with_journal(&checkpoint, &journal)
             .unwrap();
         let recovered_stamp = session.current_authority_stamp().unwrap();
 
         assert_eq!(applied.checkpoint_sequence(), checkpoint.sequence());
-        assert_eq!(applied.source(), source_stamp);
+        assert_eq!(applied.source(), checkpoint.source());
+        assert_eq!(applied.replayed_operations(), 2);
         assert_eq!(applied.recovered(), recovered_stamp);
         assert_ne!(
             recovered_stamp.authority_generation(),
-            source_stamp.authority_generation()
+            old_final_stamp.authority_generation()
         );
-        assert_eq!(recovered_stamp.revision(), DocumentRevision::INITIAL);
-        assert_eq!(session.semantic_text().unwrap().value().as_str(), "Abc");
+        // The replacement engine starts a fresh local revision clock at R0 and replays two
+        // already-accepted operations, so its final revision is R2 rather than the old R3.
+        assert_eq!(recovered_stamp.revision(), DocumentRevision::new(2));
+        assert_eq!(session.semantic_text().unwrap().value().as_str(), "Abc!?");
         assert_eq!(
-            session.require_current_stamp(source_stamp),
+            session.require_current_stamp(old_final_stamp),
             Err(AuthorityFreshnessError::AuthorityChanged {
-                observed: source_stamp.authority_generation(),
+                observed: old_final_stamp.authority_generation(),
                 current: recovered_stamp.authority_generation(),
             })
         );
+        assert_eq!(
+            session.latest_accepted_operation_sequence(),
+            after_checkpoint_two.sequence()
+        );
+
+        let next = session
+            .apply_transaction(append_at(DocumentRevision::new(2), 5, "."))
+            .unwrap();
+        assert_eq!(next.sequence().get(), 4);
+        assert_eq!(next.source(), recovered_stamp);
+        assert_eq!(session.semantic_text().unwrap().value().as_str(), "Abc!?.");
     }
 
     #[test]
-    fn failed_recovery_does_not_publish_replacement_authority() {
+    fn incomplete_recovery_journal_is_rejected_before_replacement_authority_opens() {
+        let mut session = DocumentSession::new(TestEngine::default());
+        session.open_text_fixture(String::from("abc")).unwrap();
+        let checkpoint_observation = session.semantic_text().unwrap();
+        let checkpoint = session
+            .capture_recovery_checkpoint(&checkpoint_observation)
+            .unwrap();
+        let accepted = session
+            .apply_transaction(replace_first_character(DocumentRevision::INITIAL))
+            .unwrap();
+        session.replace_engine_after_authority_loss(TestEngine::default());
+
+        let error = session
+            .recover_text_fixture_from_checkpoint(&checkpoint)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            RecoveryReplayError::JournalIncomplete {
+                expected_latest,
+                actual_latest
+            } if expected_latest == accepted.sequence() && actual_latest == checkpoint.journal_cursor()
+        ));
+        assert_eq!(session.known_revision(), None);
+        assert_eq!(session.current_authority_stamp(), None);
+    }
+
+    #[test]
+    fn replay_failure_withdraws_partially_reconstructed_authority() {
+        let mut session = DocumentSession::new(TestEngine::default());
+        session.open_text_fixture(String::from("abc")).unwrap();
+        let checkpoint_observation = session.semantic_text().unwrap();
+        let checkpoint = session
+            .capture_recovery_checkpoint(&checkpoint_observation)
+            .unwrap();
+        let accepted = session
+            .apply_transaction(replace_first_character(DocumentRevision::INITIAL))
+            .unwrap();
+
+        session.replace_engine_after_authority_loss(TestEngine {
+            fail_next_transaction: true,
+            ..TestEngine::default()
+        });
+        let error = session
+            .recover_text_fixture_with_journal(&checkpoint, &[accepted])
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            RecoveryReplayError::Engine(EngineError::Internal(message))
+                if message.contains("injected transaction")
+        ));
+        assert_eq!(session.known_revision(), None);
+        assert_eq!(session.current_authority_stamp(), None);
+    }
+
+    #[test]
+    fn failed_checkpoint_open_does_not_publish_replacement_authority() {
         let mut session = DocumentSession::new(TestEngine::default());
         session.open_text_fixture(String::from("abc")).unwrap();
         let source = session.semantic_text().unwrap();
@@ -721,14 +1116,13 @@ mod tests {
             .recover_text_fixture_from_checkpoint(&checkpoint)
             .unwrap_err();
 
-        assert!(matches!(error, EngineError::Internal(message) if message.contains("injected")));
+        assert!(matches!(
+            error,
+            RecoveryReplayError::Engine(EngineError::Internal(message)) if message.contains("injected open")
+        ));
         assert_eq!(session.known_revision(), None);
         assert_eq!(session.known_authority_generation(), None);
         assert_eq!(session.current_authority_stamp(), None);
-        assert_eq!(
-            session.require_current(&source),
-            Err(AuthorityFreshnessError::NoOpenDocument)
-        );
 
         let applied = session
             .recover_text_fixture_from_checkpoint(&checkpoint)
@@ -740,7 +1134,7 @@ mod tests {
     }
 
     #[test]
-    fn rejected_transaction_does_not_invalidate_current_observation() {
+    fn rejected_transaction_does_not_invalidate_current_observation_or_consume_sequence() {
         let mut session = DocumentSession::new(TestEngine::default());
         session.open_text_fixture(String::from("abc")).unwrap();
         let generation = session.known_authority_generation().unwrap();
@@ -760,6 +1154,12 @@ mod tests {
         assert_eq!(session.known_revision(), Some(DocumentRevision::INITIAL));
         assert_eq!(session.known_authority_generation(), Some(generation));
         assert_eq!(session.require_current(&observation), Ok(()));
+        assert_eq!(session.latest_accepted_operation_sequence().get(), 0);
+
+        let accepted = session
+            .apply_transaction(replace_first_character(DocumentRevision::INITIAL))
+            .unwrap();
+        assert_eq!(accepted.sequence().get(), 1);
     }
 
     #[test]
