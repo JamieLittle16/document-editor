@@ -26,6 +26,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: rustfmt,clippy
+      - name: Install Linux UI dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libfontconfig1-dev
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
@@ -46,10 +51,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0
-      - name: Install virtual X server
+      - name: Install Linux native-window dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y xvfb
+          sudo apt-get install --no-install-recommends -y \
+            libfontconfig1-dev \
+            xvfb
       - name: Create native window at 1x
         run: |
           set -o pipefail
