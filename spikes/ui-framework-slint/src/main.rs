@@ -218,8 +218,9 @@ fn run_snapshot_stress(ui: &EditorShell) {
         (0, 100),
     ];
     let physical_size = ui.window().size();
-    let expected_snapshot_bytes =
-        usize::try_from(physical_size.width * physical_size.height).expect("window area must fit usize") * 4;
+    let expected_snapshot_bytes = usize::try_from(physical_size.width * physical_size.height)
+        .expect("window area must fit usize")
+        * 4;
     let total_started = std::time::Instant::now();
     let mut slowest = std::time::Duration::ZERO;
     let mut checksum_xor = 0_u64;
