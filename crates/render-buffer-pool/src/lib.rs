@@ -120,10 +120,10 @@ pub enum RenderBufferPoolLimitsError {
 impl fmt::Display for RenderBufferPoolLimitsError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ZeroTotalBytes => formatter.write_str("render pool total byte budget must be nonzero"),
+            Self::ZeroTotalBytes => {\n                formatter.write_str("render pool total byte budget must be nonzero")\n            }
             Self::ZeroSlots => formatter.write_str("render pool slot budget must be nonzero"),
-            Self::TooManySlots => formatter.write_str("render pool slot budget exceeds u32 identity space"),
-            Self::ZeroSlotBytes => formatter.write_str("render pool maximum slot capacity must be nonzero"),
+            Self::TooManySlots => {\n                formatter.write_str("render pool slot budget exceeds u32 identity space")\n            }
+            Self::ZeroSlotBytes => {\n                formatter.write_str("render pool maximum slot capacity must be nonzero")\n            }
             Self::SlotExceedsTotalBudget => {
                 formatter.write_str("render pool maximum slot capacity exceeds total byte budget")
             }
@@ -637,8 +637,7 @@ where
             .iter()
             .enumerate()
             .filter(|(_, slot)| {
-                matches!(slot.state, SlotState::Available)
-                    && slot.capacity_bytes >= requested_bytes
+                matches!(slot.state, SlotState::Available) && slot.capacity_bytes >= requested_bytes
             })
             .min_by_key(|(_, slot)| slot.capacity_bytes)
             .map(|(index, _)| index)
@@ -689,10 +688,14 @@ where
         let index = usize::try_from(lease_id.buffer_id.0)
             .map_err(|_| RenderBufferTransitionError::UnknownBuffer(lease_id.buffer_id))?;
         let Some(slot) = self.slots.get(index) else {
-            return Err(RenderBufferTransitionError::UnknownBuffer(lease_id.buffer_id));
+            return Err(RenderBufferTransitionError::UnknownBuffer(
+                lease_id.buffer_id,
+            ));
         };
         if slot.id != lease_id.buffer_id {
-            return Err(RenderBufferTransitionError::UnknownBuffer(lease_id.buffer_id));
+            return Err(RenderBufferTransitionError::UnknownBuffer(
+                lease_id.buffer_id,
+            ));
         }
         if slot.generation != lease_id.generation {
             return Err(RenderBufferTransitionError::StaleLease {
