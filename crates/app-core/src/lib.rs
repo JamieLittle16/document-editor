@@ -82,7 +82,10 @@ impl<E: DocumentEngine> AppCore<E> {
     /// The application layer computes the smallest single UTF-8-safe replacement window and
     /// sends that transaction through the authoritative session. A byte-identical replacement is
     /// a true no-op and does not advance revision.
-    pub fn replace_document_text(&mut self, next_text: &str) -> Result<EditorSnapshot, EngineError> {
+    pub fn replace_document_text(
+        &mut self,
+        next_text: &str,
+    ) -> Result<EditorSnapshot, EngineError> {
         let current = self.session.semantic_text()?;
         if current.value() == next_text {
             return Ok(EditorSnapshot::from_observation(current));
@@ -223,9 +226,7 @@ mod tests {
         assert_eq!(opened.revision(), 0);
         assert_eq!(opened.text(), "hello world");
 
-        let edited = app
-            .replace_document_text("hello editor")
-            .unwrap();
+        let edited = app.replace_document_text("hello editor").unwrap();
         assert_eq!(edited.authority_generation(), 1);
         assert_eq!(edited.revision(), 1);
         assert_eq!(edited.text(), "hello editor");
