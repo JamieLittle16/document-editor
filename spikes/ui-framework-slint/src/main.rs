@@ -105,9 +105,9 @@ slint::slint! {
                 ScrollView {
                     width: parent.width;
                     height: parent.height;
-                    content-width: 1200px;
-                    content-height: 64px + root.page-indices.length * (1088px * root.zoom-percent / 100);
-                    content-y: -root.visible-page-index * (1088px * root.zoom-percent / 100);
+                    viewport-width: 1200px;
+                    viewport-height: 64px + root.page-indices.length * (1088px * root.zoom-percent / 100);
+                    viewport-y: -root.visible-page-index * (1088px * root.zoom-percent / 100);
 
                     Rectangle {
                         width: 1200px;
