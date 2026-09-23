@@ -10,7 +10,7 @@ R0A's high-risk foundations are now established strongly enough to build on rath
 
 The application path has also moved beyond harness-only work. `app-core` owns authoritative edit intent and snapshots, the first runnable Slint desktop shell sends text edits through that application authority rather than treating widget state as truth, and the large-document viewport qualification demonstrates a virtualized presentation strategy. Slint remains **provisional and replaceable** pending the remaining real-platform IME/accessibility and desktop-integration evidence.
 
-The active R0B frontier is implementation and integration of the already-selected boundaries: worker-visible external/platform render backing behind the validated host-owned descriptor/lease model, supervised Writer-worker wiring into the authoritative shell, persisted checkpoint/journal storage and user-visible recovery, then richer session/viewport/editor behavior without weakening the authority, anchor or engine-replaceability contracts.
+The active R0B frontier is implementation and integration of the already-selected boundaries: platform mapped render backing and supervised Writer-worker wiring behind the now-qualified external capability/descriptor lifecycle, persisted checkpoint/journal storage and user-visible recovery, then richer session/viewport/editor behavior without weakening the authority, anchor or engine-replaceability contracts.
 
 ## Accepted strategic decisions
 
@@ -77,7 +77,7 @@ The active R0B frontier is implementation and integration of the already-selecte
 - ADR-0011 is now backed by a dependency-free `render-buffer-pool` resource state machine with bounded byte/slot admission, scoped write leases, generation-safe reuse, publication/retain/recycle lifecycle and dead-scope reclamation;
 - host-owned backing preparation clears reused write ranges before renderer exposure and rolls back failed preparation without leaking lease/scope budget;
 - fixed-width raster descriptors validate explicit pixel format, lease generation, capacity, offset/length, width/height/stride arithmetic and published-prefix containment before any backing slice is exposed;
-- the render pool deliberately owns lifecycle, resource identity and descriptor validation only; worker-visible external/platform backing storage remains the next R0B layer.
+- a portable second-process file-backed qualification now proves validated worker-region writes, host publication gating and storage isolation when a stale worker continues writing after logical slot reuse;\n- the qualification uses generation-specific external backing objects rather than promoting paths/files into product identity; production platform mappings must preserve equivalent stale-writer isolation;\n- the render pool deliberately owns lifecycle, resource identity and descriptor validation only; platform mapped backing and supervised real-worker integration remain the next R0B layer.
 
 ### Modular feature kernel
 
