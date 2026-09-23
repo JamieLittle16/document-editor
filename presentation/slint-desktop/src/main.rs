@@ -238,7 +238,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 match result {
                     Ok(snapshot) => publish_snapshot(&ui, &snapshot),
                     Err(error) => {
-                        ui.set_status_text(format!("New document failed: {error:?}").into())
+                        ui.set_status_text(format!("New document failed: {error:?}").into());
                     }
                 }
             }
