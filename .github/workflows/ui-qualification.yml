@@ -2,7 +2,13 @@ name: ui-qualification
 
 on:
   push:
+    paths:
+      - "spikes/ui-framework-slint/**"
+      - ".github/workflows/ui-qualification.yml"
   pull_request:
+    paths:
+      - "spikes/ui-framework-slint/**"
+      - ".github/workflows/ui-qualification.yml"
 
 permissions:
   contents: read
