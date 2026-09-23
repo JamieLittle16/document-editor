@@ -215,6 +215,377 @@ impl<Scope> ReadyRenderBuffer<Scope> {
     }
 }
 
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum RenderPixelFormat {
+    Rgba8 = 1,
+    Bgra8 = 2,
+}
+
+impl RenderPixelFormat {
+    #[must_use]
+    pub const fn bytes_per_pixel(self) -> u32 {
+        match self {
+            Self::Rgba8 | Self::Bgra8 => 4,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UnsupportedRenderPixelFormat(pub u8);
+
+impl fmt::Display for UnsupportedRenderPixelFormat {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "unsupported render pixel format {}", self.0)
+    }
+}
+
+impl std::error::Error for UnsupportedRenderPixelFormat {}
+
+impl TryFrom<u8> for RenderPixelFormat {
+    type Error = UnsupportedRenderPixelFormat;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Rgba8),
+            2 => Ok(Self::Bgra8),
+            other => Err(UnsupportedRenderPixelFormat(other)),
+        }
+    }
+}
+
+/// Fixed-width raster metadata suitable for a bounded worker-control descriptor.
+///
+/// The descriptor deliberately carries primitive fixed-width values rather than host-width
+/// offsets or pointers. Construction validates geometry arithmetic and containment inside the
+/// declared slot capacity before the descriptor may be bound to a live lease.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RenderRasterDescriptor {
+    buffer_id: u32,
+    lease_generation: u64,
+    capacity_bytes: u64,
+    offset_bytes: u64,
+    byte_length: u64,
+    width: u32,
+    height: u32,
+    stride_bytes: u32,
+    pixel_format: RenderPixelFormat,
+}
+
+impl RenderRasterDescriptor {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        buffer_id: u32,
+        lease_generation: u64,
+        capacity_bytes: u64,
+        offset_bytes: u64,
+        byte_length: u64,
+        width: u32,
+        height: u32,
+        stride_bytes: u32,
+        pixel_format: RenderPixelFormat,
+    ) -> Result<Self, RenderRasterDescriptorError> {
+        if width == 0 {
+            return Err(RenderRasterDescriptorError::ZeroWidth);
+        }
+        if height == 0 {
+            return Err(RenderRasterDescriptorError::ZeroHeight);
+        }
+
+        let row_bytes = u64::from(width)
+            .checked_mul(u64::from(pixel_format.bytes_per_pixel()))
+            .ok_or(RenderRasterDescriptorError::GeometryOverflow)?;
+        let stride = u64::from(stride_bytes);
+        if stride < row_bytes {
+            return Err(RenderRasterDescriptorError::StrideTooSmall {
+                stride: stride_bytes,
+                minimum: row_bytes,
+            });
+        }
+
+        let minimum_byte_length = u64::from(height - 1)
+            .checked_mul(stride)
+            .and_then(|prefix| prefix.checked_add(row_bytes))
+            .ok_or(RenderRasterDescriptorError::GeometryOverflow)?;
+        if byte_length < minimum_byte_length {
+            return Err(RenderRasterDescriptorError::ByteLengthTooSmall {
+                declared: byte_length,
+                minimum: minimum_byte_length,
+            });
+        }
+
+        let range_end = offset_bytes
+            .checked_add(byte_length)
+            .ok_or(RenderRasterDescriptorError::RangeOverflow)?;
+        if range_end > capacity_bytes {
+            return Err(RenderRasterDescriptorError::RangeExceedsCapacity {
+                range_end,
+                capacity: capacity_bytes,
+            });
+        }
+
+        Ok(Self {
+            buffer_id,
+            lease_generation,
+            capacity_bytes,
+            offset_bytes,
+            byte_length,
+            width,
+            height,
+            stride_bytes,
+            pixel_format,
+        })
+    }
+
+    #[must_use]
+    pub const fn buffer_id(self) -> u32 {
+        self.buffer_id
+    }
+
+    #[must_use]
+    pub const fn lease_generation(self) -> u64 {
+        self.lease_generation
+    }
+
+    #[must_use]
+    pub const fn capacity_bytes(self) -> u64 {
+        self.capacity_bytes
+    }
+
+    #[must_use]
+    pub const fn offset_bytes(self) -> u64 {
+        self.offset_bytes
+    }
+
+    #[must_use]
+    pub const fn byte_length(self) -> u64 {
+        self.byte_length
+    }
+
+    #[must_use]
+    pub const fn width(self) -> u32 {
+        self.width
+    }
+
+    #[must_use]
+    pub const fn height(self) -> u32 {
+        self.height
+    }
+
+    #[must_use]
+    pub const fn stride_bytes(self) -> u32 {
+        self.stride_bytes
+    }
+
+    #[must_use]
+    pub const fn pixel_format(self) -> RenderPixelFormat {
+        self.pixel_format
+    }
+
+    #[must_use]
+    pub const fn range_end(self) -> u64 {
+        self.offset_bytes + self.byte_length
+    }
+
+    pub fn validate_write_lease<Scope>(
+        self,
+        lease: &RenderWriteLease<Scope>,
+    ) -> Result<(), RenderRasterBindingError> {
+        self.validate_identity_and_capacity(lease.id(), lease.capacity_bytes())?;
+        let range_end = usize::try_from(self.range_end()).map_err(|_| {
+            RenderRasterBindingError::RangeExceedsLeaseRequest {
+                range_end: self.range_end(),
+                requested: lease.requested_bytes(),
+            }
+        })?;
+        if range_end > lease.requested_bytes() {
+            return Err(RenderRasterBindingError::RangeExceedsLeaseRequest {
+                range_end: self.range_end(),
+                requested: lease.requested_bytes(),
+            });
+        }
+        Ok(())
+    }
+
+    pub fn validate_ready_buffer<Scope>(
+        self,
+        ready: &ReadyRenderBuffer<Scope>,
+    ) -> Result<(), RenderRasterBindingError> {
+        self.validate_identity_and_capacity(ready.id(), ready.capacity_bytes())?;
+        let range_end = usize::try_from(self.range_end()).map_err(|_| {
+            RenderRasterBindingError::RangeExceedsPublishedBytes {
+                range_end: self.range_end(),
+                published: ready.written_bytes(),
+            }
+        })?;
+        if range_end > ready.written_bytes() {
+            return Err(RenderRasterBindingError::RangeExceedsPublishedBytes {
+                range_end: self.range_end(),
+                published: ready.written_bytes(),
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_identity_and_capacity(
+        self,
+        lease_id: RenderLeaseId,
+        actual_capacity: usize,
+    ) -> Result<(), RenderRasterBindingError> {
+        if self.buffer_id != lease_id.buffer_id().get() {
+            return Err(RenderRasterBindingError::BufferIdMismatch {
+                declared: self.buffer_id,
+                actual: lease_id.buffer_id(),
+            });
+        }
+        if self.lease_generation != lease_id.generation().get() {
+            return Err(RenderRasterBindingError::LeaseGenerationMismatch {
+                declared: self.lease_generation,
+                actual: lease_id.generation(),
+            });
+        }
+        if usize::try_from(self.capacity_bytes).ok() != Some(actual_capacity) {
+            return Err(RenderRasterBindingError::CapacityMismatch {
+                declared: self.capacity_bytes,
+                actual: actual_capacity,
+            });
+        }
+        Ok(())
+    }
+
+    fn host_range(self) -> Result<std::ops::Range<usize>, RenderRasterBindingError> {
+        let start = usize::try_from(self.offset_bytes).map_err(|_| {
+            RenderRasterBindingError::HostRangeNotRepresentable {
+                offset: self.offset_bytes,
+                byte_length: self.byte_length,
+            }
+        })?;
+        let end = usize::try_from(self.range_end()).map_err(|_| {
+            RenderRasterBindingError::HostRangeNotRepresentable {
+                offset: self.offset_bytes,
+                byte_length: self.byte_length,
+            }
+        })?;
+        Ok(start..end)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RenderRasterDescriptorError {
+    ZeroWidth,
+    ZeroHeight,
+    StrideTooSmall { stride: u32, minimum: u64 },
+    GeometryOverflow,
+    ByteLengthTooSmall { declared: u64, minimum: u64 },
+    RangeOverflow,
+    RangeExceedsCapacity { range_end: u64, capacity: u64 },
+}
+
+impl fmt::Display for RenderRasterDescriptorError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroWidth => formatter.write_str("render raster width must be nonzero"),
+            Self::ZeroHeight => formatter.write_str("render raster height must be nonzero"),
+            Self::StrideTooSmall { stride, minimum } => write!(
+                formatter,
+                "render raster stride {stride} is smaller than minimum row width {minimum}"
+            ),
+            Self::GeometryOverflow => {
+                formatter.write_str("render raster geometry overflows fixed-width byte arithmetic")
+            }
+            Self::ByteLengthTooSmall { declared, minimum } => write!(
+                formatter,
+                "render raster byte length {declared} is smaller than geometry minimum {minimum}"
+            ),
+            Self::RangeOverflow => {
+                formatter.write_str("render raster offset plus byte length overflows u64")
+            }
+            Self::RangeExceedsCapacity {
+                range_end,
+                capacity,
+            } => write!(
+                formatter,
+                "render raster range ends at byte {range_end}, exceeding declared capacity {capacity}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RenderRasterDescriptorError {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RenderRasterBindingError {
+    BufferIdMismatch {
+        declared: u32,
+        actual: RenderBufferId,
+    },
+    LeaseGenerationMismatch {
+        declared: u64,
+        actual: RenderLeaseGeneration,
+    },
+    CapacityMismatch {
+        declared: u64,
+        actual: usize,
+    },
+    RangeExceedsLeaseRequest {
+        range_end: u64,
+        requested: usize,
+    },
+    RangeExceedsPublishedBytes {
+        range_end: u64,
+        published: usize,
+    },
+    HostRangeNotRepresentable {
+        offset: u64,
+        byte_length: u64,
+    },
+}
+
+impl fmt::Display for RenderRasterBindingError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BufferIdMismatch { declared, actual } => write!(
+                formatter,
+                "render descriptor names buffer {declared}, live lease names {}",
+                actual.get()
+            ),
+            Self::LeaseGenerationMismatch { declared, actual } => write!(
+                formatter,
+                "render descriptor names lease generation {declared}, live generation is {}",
+                actual.get()
+            ),
+            Self::CapacityMismatch { declared, actual } => write!(
+                formatter,
+                "render descriptor declares capacity {declared}, live slot capacity is {actual}"
+            ),
+            Self::RangeExceedsLeaseRequest {
+                range_end,
+                requested,
+            } => write!(
+                formatter,
+                "render descriptor range ends at byte {range_end}, exceeding lease request {requested}"
+            ),
+            Self::RangeExceedsPublishedBytes {
+                range_end,
+                published,
+            } => write!(
+                formatter,
+                "render descriptor range ends at byte {range_end}, exceeding published prefix {published}"
+            ),
+            Self::HostRangeNotRepresentable {
+                offset,
+                byte_length,
+            } => write!(
+                formatter,
+                "render descriptor range offset={offset} length={byte_length} is not representable on this host"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RenderRasterBindingError {}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RenderBufferAcquireError {
     ZeroByteRequest,
@@ -1010,6 +1381,43 @@ impl From<RenderBufferTransitionError> for RenderBufferAccessError {
     }
 }
 
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RenderRasterBufferAccessError {
+    Buffer(RenderBufferAccessError),
+    Descriptor(RenderRasterBindingError),
+}
+
+impl fmt::Display for RenderRasterBufferAccessError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Buffer(error) => error.fmt(formatter),
+            Self::Descriptor(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for RenderRasterBufferAccessError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Buffer(error) => Some(error),
+            Self::Descriptor(error) => Some(error),
+        }
+    }
+}
+
+impl From<RenderBufferAccessError> for RenderRasterBufferAccessError {
+    fn from(error: RenderBufferAccessError) -> Self {
+        Self::Buffer(error)
+    }
+}
+
+impl From<RenderRasterBindingError> for RenderRasterBufferAccessError {
+    fn from(error: RenderRasterBindingError) -> Self {
+        Self::Descriptor(error)
+    }
+}
+
 /// Composition of the bounded lease state machine with host-owned byte storage.
 ///
 /// This remains a host-side primitive. It deliberately does not decide how a platform mapping
@@ -1073,6 +1481,17 @@ where
         Ok(&mut bytes[..required])
     }
 
+    pub fn write_raster_bytes(
+        &mut self,
+        lease: &RenderWriteLease<Scope>,
+        descriptor: RenderRasterDescriptor,
+    ) -> Result<&mut [u8], RenderRasterBufferAccessError> {
+        descriptor.validate_write_lease(lease)?;
+        let range = descriptor.host_range()?;
+        let bytes = self.write_bytes(lease)?;
+        Ok(&mut bytes[range])
+    }
+
     pub fn publish(
         &mut self,
         lease: &RenderWriteLease<Scope>,
@@ -1099,6 +1518,17 @@ where
             });
         }
         Ok(&bytes[..required])
+    }
+
+    pub fn read_raster_bytes(
+        &self,
+        ready: &ReadyRenderBuffer<Scope>,
+        descriptor: RenderRasterDescriptor,
+    ) -> Result<&[u8], RenderRasterBufferAccessError> {
+        descriptor.validate_ready_buffer(ready)?;
+        let range = descriptor.host_range()?;
+        let bytes = self.read_bytes(ready)?;
+        Ok(&bytes[range])
     }
 
     pub fn retain(
@@ -1395,6 +1825,271 @@ mod tests {
         assert_eq!(
             pool.acquire(Scope(33), 1),
             Err(RenderBufferAcquireError::PoolExhausted)
+        );
+    }
+
+    fn descriptor_for<Scope>(
+        lease: &RenderWriteLease<Scope>,
+        offset_bytes: u64,
+        byte_length: u64,
+        width: u32,
+        height: u32,
+        stride_bytes: u32,
+    ) -> RenderRasterDescriptor {
+        RenderRasterDescriptor::new(
+            lease.id().buffer_id().get(),
+            lease.id().generation().get(),
+            u64::try_from(lease.capacity_bytes()).expect("test capacity fits u64"),
+            offset_bytes,
+            byte_length,
+            width,
+            height,
+            stride_bytes,
+            RenderPixelFormat::Rgba8,
+        )
+        .expect("test descriptor must be structurally valid")
+    }
+
+    #[test]
+    fn pixel_format_wire_values_are_explicit_and_unknown_values_are_rejected() {
+        assert_eq!(RenderPixelFormat::try_from(1), Ok(RenderPixelFormat::Rgba8));
+        assert_eq!(RenderPixelFormat::try_from(2), Ok(RenderPixelFormat::Bgra8));
+        assert_eq!(
+            RenderPixelFormat::try_from(3),
+            Err(UnsupportedRenderPixelFormat(3))
+        );
+    }
+
+    #[test]
+    fn raster_descriptor_validates_geometry_and_capacity_before_lease_binding() {
+        let descriptor = RenderRasterDescriptor::new(
+            7,
+            11,
+            262_144,
+            0,
+            262_144,
+            256,
+            256,
+            1_024,
+            RenderPixelFormat::Rgba8,
+        )
+        .expect("qualified tile geometry must be valid");
+        assert_eq!(descriptor.range_end(), 262_144);
+
+        assert_eq!(
+            RenderRasterDescriptor::new(
+                7,
+                11,
+                262_144,
+                0,
+                262_144,
+                256,
+                256,
+                1_023,
+                RenderPixelFormat::Rgba8,
+            ),
+            Err(RenderRasterDescriptorError::StrideTooSmall {
+                stride: 1_023,
+                minimum: 1_024,
+            })
+        );
+        assert_eq!(
+            RenderRasterDescriptor::new(
+                7,
+                11,
+                262_144,
+                0,
+                262_143,
+                256,
+                256,
+                1_024,
+                RenderPixelFormat::Rgba8,
+            ),
+            Err(RenderRasterDescriptorError::ByteLengthTooSmall {
+                declared: 262_143,
+                minimum: 262_144,
+            })
+        );
+        assert_eq!(
+            RenderRasterDescriptor::new(
+                7,
+                11,
+                262_143,
+                0,
+                262_144,
+                256,
+                256,
+                1_024,
+                RenderPixelFormat::Rgba8,
+            ),
+            Err(RenderRasterDescriptorError::RangeExceedsCapacity {
+                range_end: 262_144,
+                capacity: 262_143,
+            })
+        );
+    }
+
+    #[test]
+    fn raster_descriptor_rejects_fixed_width_range_and_geometry_overflow() {
+        assert_eq!(
+            RenderRasterDescriptor::new(
+                1,
+                1,
+                u64::MAX,
+                u64::MAX - 3,
+                4,
+                1,
+                1,
+                4,
+                RenderPixelFormat::Rgba8,
+            ),
+            Err(RenderRasterDescriptorError::RangeOverflow)
+        );
+
+        assert_eq!(
+            RenderRasterDescriptor::new(
+                1,
+                1,
+                u64::MAX,
+                0,
+                u64::MAX,
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+                RenderPixelFormat::Rgba8,
+            ),
+            Err(RenderRasterDescriptorError::StrideTooSmall {
+                stride: u32::MAX,
+                minimum: u64::from(u32::MAX) * 4,
+            })
+        );
+    }
+
+    #[test]
+    fn raster_descriptor_binds_exactly_to_live_lease_identity_capacity_and_request() {
+        let mut pool = RenderBufferPool::new(limits(1_024, 1, 1_024, 1));
+        let scope = Scope(46);
+        let lease = pool.acquire(scope, 512).expect("lease");
+
+        let valid = descriptor_for(&lease, 128, 256, 32, 2, 128);
+        valid
+            .validate_write_lease(&lease)
+            .expect("descriptor must fit current lease");
+
+        let wrong_buffer = RenderRasterDescriptor::new(
+            lease.id().buffer_id().get() + 1,
+            lease.id().generation().get(),
+            u64::try_from(lease.capacity_bytes()).expect("capacity fits"),
+            128,
+            256,
+            32,
+            2,
+            128,
+            RenderPixelFormat::Rgba8,
+        )
+        .expect("structurally valid");
+        assert_eq!(
+            wrong_buffer.validate_write_lease(&lease),
+            Err(RenderRasterBindingError::BufferIdMismatch {
+                declared: lease.id().buffer_id().get() + 1,
+                actual: lease.id().buffer_id(),
+            })
+        );
+
+        let request_escape = descriptor_for(&lease, 384, 128, 16, 2, 64);
+        request_escape
+            .validate_write_lease(&lease)
+            .expect("range ending exactly at requested prefix is valid");
+
+        let beyond_request = RenderRasterDescriptor::new(
+            lease.id().buffer_id().get(),
+            lease.id().generation().get(),
+            u64::try_from(lease.capacity_bytes()).expect("capacity fits"),
+            448,
+            128,
+            16,
+            2,
+            64,
+            RenderPixelFormat::Rgba8,
+        )
+        .expect("descriptor fits capacity");
+        assert_eq!(
+            beyond_request.validate_write_lease(&lease),
+            Err(RenderRasterBindingError::RangeExceedsLeaseRequest {
+                range_end: 576,
+                requested: 512,
+            })
+        );
+    }
+
+    #[test]
+    fn raster_access_is_sliced_to_validated_region_and_published_prefix() {
+        let mut buffers = BackedRenderBufferPool::new(
+            limits(1_024, 1, 1_024, 1),
+            InMemoryRenderBufferBacking::new(),
+        );
+        let scope = Scope(47);
+        let lease = buffers.acquire(scope, 512).expect("lease");
+        let descriptor = descriptor_for(&lease, 128, 256, 32, 2, 128);
+
+        let raster = buffers
+            .write_raster_bytes(&lease, descriptor)
+            .expect("raster write region");
+        assert_eq!(raster.len(), 256);
+        raster.fill(0x5a);
+
+        let ready = buffers.publish(&lease, 384).expect("publish through range end");
+        assert_eq!(
+            buffers
+                .read_raster_bytes(&ready, descriptor)
+                .expect("published raster region"),
+            vec![0x5a; 256].as_slice()
+        );
+
+        let unpublished_descriptor = RenderRasterDescriptor::new(
+            ready.id().buffer_id().get(),
+            ready.id().generation().get(),
+            u64::try_from(ready.capacity_bytes()).expect("capacity fits"),
+            256,
+            256,
+            32,
+            2,
+            128,
+            RenderPixelFormat::Rgba8,
+        )
+        .expect("descriptor fits capacity");
+        assert_eq!(
+            buffers.read_raster_bytes(&ready, unpublished_descriptor),
+            Err(RenderRasterBufferAccessError::Descriptor(
+                RenderRasterBindingError::RangeExceedsPublishedBytes {
+                    range_end: 512,
+                    published: 384,
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn stale_descriptor_generation_cannot_reopen_reused_backing() {
+        let mut buffers = BackedRenderBufferPool::new(
+            limits(512, 1, 512, 1),
+            InMemoryRenderBufferBacking::new(),
+        );
+        let scope = Scope(48);
+
+        let first = buffers.acquire(scope, 256).expect("first lease");
+        let stale_descriptor = descriptor_for(&first, 0, 256, 32, 2, 128);
+        buffers.cancel(&first).expect("cancel first lease");
+        let second = buffers.acquire(scope, 256).expect("second lease");
+
+        assert_eq!(
+            buffers.write_raster_bytes(&second, stale_descriptor),
+            Err(RenderRasterBufferAccessError::Descriptor(
+                RenderRasterBindingError::LeaseGenerationMismatch {
+                    declared: first.id().generation().get(),
+                    actual: second.id().generation(),
+                }
+            ))
         );
     }
 
