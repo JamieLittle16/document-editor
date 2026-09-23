@@ -7,7 +7,9 @@ license.workspace = true
 
 [dependencies]
 document-engine-api = { path = "../document-engine-api" }
+document-protocol = { path = "../document-protocol" }
 document-session = { path = "../document-session" }
+extension-runtime = { path = "../extension-runtime" }
 
 [lints]
 workspace = true
