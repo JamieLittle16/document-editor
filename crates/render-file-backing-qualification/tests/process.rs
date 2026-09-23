@@ -16,10 +16,8 @@ struct TestRoot(PathBuf);
 impl TestRoot {
     fn new(name: &str) -> Self {
         let sequence = NEXT_TEST_DIR.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "office-{name}-{}-{sequence}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("office-{name}-{}-{sequence}", std::process::id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("create test root");
         Self(path)
@@ -72,7 +70,9 @@ fn child_process_writes_only_validated_raster_region_before_host_publication() {
     pool.cancel(warmup.id(), &scope).expect("release warmup");
     let lease = pool.acquire(scope, 1_280).expect("render lease");
     let descriptor = tile_descriptor(&lease);
-    let prepared = backing.prepare_lease(&lease).expect("prepare external lease");
+    let prepared = backing
+        .prepare_lease(&lease)
+        .expect("prepare external lease");
     let capability = backing
         .raster_capability(&prepared, &lease, descriptor)
         .expect("validated worker capability");
@@ -172,7 +172,8 @@ fn stale_worker_capability_cannot_corrupt_new_slot_generation() {
 
     let old_bytes = fs::read(old_prepared.path()).expect("read old backing");
     assert!(old_bytes[256..1_280].iter().all(|byte| *byte == 34));
-    let new_bytes_after = fs::read(new_prepared.path()).expect("read new backing after stale write");
+    let new_bytes_after =
+        fs::read(new_prepared.path()).expect("read new backing after stale write");
     assert!(new_bytes_after[..1_280].iter().all(|byte| *byte == 0));
 
     assert_eq!(
