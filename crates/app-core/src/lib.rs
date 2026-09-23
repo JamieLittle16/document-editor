@@ -82,17 +82,14 @@ impl<E: DocumentEngine> AppCore<E> {
     /// The application layer computes the smallest single UTF-8-safe replacement window and
     /// sends that transaction through the authoritative session. A byte-identical replacement is
     /// a true no-op and does not advance revision.
-    pub fn replace_document_text(
-        &mut self,
-        next_text: String,
-    ) -> Result<EditorSnapshot, EngineError> {
+    pub fn replace_document_text(&mut self, next_text: &str) -> Result<EditorSnapshot, EngineError> {
         let current = self.session.semantic_text()?;
-        if current.value() == &next_text {
+        if current.value() == next_text {
             return Ok(EditorSnapshot::from_observation(current));
         }
 
         let expected_revision = current.revision();
-        let (start, end, replacement) = replacement_window(current.value(), &next_text);
+        let (start, end, replacement) = replacement_window(current.value(), next_text);
         let transaction = DocumentTransaction {
             expected_revision,
             edits: vec![TextEdit {
@@ -227,7 +224,7 @@ mod tests {
         assert_eq!(opened.text(), "hello world");
 
         let edited = app
-            .replace_document_text(String::from("hello editor"))
+            .replace_document_text("hello editor")
             .unwrap();
         assert_eq!(edited.authority_generation(), 1);
         assert_eq!(edited.revision(), 1);
@@ -239,7 +236,7 @@ mod tests {
         let mut app = AppCore::new(TestEngine::default());
         app.open_text_document(String::from("same")).unwrap();
 
-        let unchanged = app.replace_document_text(String::from("same")).unwrap();
+        let unchanged = app.replace_document_text("same").unwrap();
 
         assert_eq!(unchanged.revision(), 0);
         assert_eq!(unchanged.text(), "same");
