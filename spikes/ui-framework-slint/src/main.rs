@@ -3,7 +3,7 @@
 use slint::{ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
 
 slint::slint! {
-    import { Button, LineEdit, ScrollView } from "std-widgets.slint";
+    import { Button, LineEdit, ListView } from "std-widgets.slint";
 
     export component EditorShell inherits Window {
         title: "Office UI Qualification";
@@ -102,21 +102,20 @@ slint::slint! {
                 accessible-id: "document-viewport";
                 accessible-label: "Document viewport";
 
-                ScrollView {
+                ListView {
                     width: parent.width;
                     height: parent.height;
                     viewport-width: 1200px;
-                    viewport-height: 64px + root.page-indices.length * (1088px * root.zoom-percent / 100);
                     viewport-y: -root.visible-page-index * (1088px * root.zoom-percent / 100);
 
-                    Rectangle {
+                    for page-index in root.page-indices: Rectangle {
                         width: 1200px;
-                        height: 64px + root.page-indices.length * (1088px * root.zoom-percent / 100);
+                        height: 1088px * root.zoom-percent / 100;
                         background: #dfe3e8;
 
-                        for page-index in root.page-indices: Rectangle {
+                        Rectangle {
                             x: 192px;
-                            y: 64px + page-index * (1088px * root.zoom-percent / 100);
+                            y: 16px;
                             width: 816px * root.zoom-percent / 100;
                             height: 1056px * root.zoom-percent / 100;
                             background: white;
@@ -318,8 +317,9 @@ mod tests {
 
     #[test]
     fn qualification_page_model_is_large_and_bounded() {
-        assert_eq!(QUALIFICATION_PAGE_COUNT, 96);
-        assert!(QUALIFICATION_PAGE_COUNT > 50);
-        assert!(QUALIFICATION_PAGE_COUNT < 1_000);
+        let pages = (0..QUALIFICATION_PAGE_COUNT).collect::<Vec<_>>();
+        assert_eq!(pages.len(), 96);
+        assert_eq!(pages.first(), Some(&0));
+        assert_eq!(pages.last(), Some(&95));
     }
 }
