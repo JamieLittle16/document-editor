@@ -1,0 +1,29 @@
+[package]
+name = "office-desktop-slint"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.92"
+publish = false
+
+[dependencies]
+app-core = { path = "../../crates/app-core" }
+document-engine-mock = { path = "../../crates/document-engine-mock" }
+slint = { version = "=1.17.1", default-features = false, features = [
+  "std",
+  "backend-winit",
+  "renderer-software",
+  "accessibility",
+  "compat-1-2",
+] }
+
+[workspace]
+
+# Keep the product workspace at unsafe_code="forbid". Slint-generated Rust uses
+# its own scoped allow(unsafe_code), so only this replaceable presentation
+# adapter uses deny; authored unsafe code remains an error.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
