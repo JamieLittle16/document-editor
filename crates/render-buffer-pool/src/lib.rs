@@ -215,7 +215,6 @@ impl<Scope> ReadyRenderBuffer<Scope> {
     }
 }
 
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum RenderPixelFormat {
@@ -1381,7 +1380,6 @@ impl From<RenderBufferTransitionError> for RenderBufferAccessError {
     }
 }
 
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RenderRasterBufferAccessError {
     Buffer(RenderBufferAccessError),
@@ -2038,7 +2036,9 @@ mod tests {
         assert_eq!(raster.len(), 256);
         raster.fill(0x5a);
 
-        let ready = buffers.publish(&lease, 384).expect("publish through range end");
+        let ready = buffers
+            .publish(&lease, 384)
+            .expect("publish through range end");
         assert_eq!(
             buffers
                 .read_raster_bytes(&ready, descriptor)
@@ -2071,10 +2071,8 @@ mod tests {
 
     #[test]
     fn stale_descriptor_generation_cannot_reopen_reused_backing() {
-        let mut buffers = BackedRenderBufferPool::new(
-            limits(512, 1, 512, 1),
-            InMemoryRenderBufferBacking::new(),
-        );
+        let mut buffers =
+            BackedRenderBufferPool::new(limits(512, 1, 512, 1), InMemoryRenderBufferBacking::new());
         let scope = Scope(48);
 
         let first = buffers.acquire(scope, 256).expect("first lease");
