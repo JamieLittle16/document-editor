@@ -282,7 +282,10 @@ impl fmt::Display for ExternalFileRenderBackingError {
             Self::Io(error) => write!(formatter, "external render backing I/O failed: {error}"),
             Self::Descriptor(error) => error.fmt(formatter),
             Self::HostSizeNotRepresentable { bytes } => {
-                write!(formatter, "render backing size {bytes} is not representable as u64")
+                write!(
+                    formatter,
+                    "render backing size {bytes} is not representable as u64"
+                )
             }
             Self::PreparedLeaseMismatch { prepared, live } => write!(
                 formatter,
