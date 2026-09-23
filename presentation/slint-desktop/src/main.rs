@@ -116,9 +116,9 @@ slint::slint! {
                 accessible-label: "Document editor";
 
                 Rectangle {
-                    x: 9%;
+                    x: 72px;
                     y: 24px;
-                    width: 82%;
+                    width: parent.width - 144px;
                     height: parent.height - 48px;
                     background: white;
                     border-width: 1px;
@@ -237,7 +237,9 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Some(ui) = weak_ui.upgrade() {
                 match result {
                     Ok(snapshot) => publish_snapshot(&ui, &snapshot),
-                    Err(error) => ui.set_status_text(format!("New document failed: {error:?}").into()),
+                    Err(error) => {
+                        ui.set_status_text(format!("New document failed: {error:?}").into())
+                    }
                 }
             }
         });
