@@ -25,7 +25,7 @@ ALLOWED_INTERNAL_DEPENDENCIES: dict[str, set[str]] = {
     "extension-api": set(),
     "extension-runtime": {"extension-api"},
     "feature-host": {"extension-api", "extension-runtime"},
-    "app-core": {"document-engine-api", "document-session", "extension-runtime"},
+    "app-core": {"document-engine-api", "document-protocol", "document-session", "extension-runtime"},
     # R0A executable harness: direct mock/session access is temporary and visible.
     "desktop": {
         "app-core",
