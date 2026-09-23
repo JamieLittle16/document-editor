@@ -530,14 +530,13 @@ where
     ) -> Result<(), RenderBufferTransitionError> {
         let slot_index = self.validate_generation(lease_id)?;
         let state = &self.slots[slot_index].state;
-        let owner = match state {
-            SlotState::Ready { scope, .. } | SlotState::Retained { scope, .. } => scope,
-            _ => {
-                return Err(RenderBufferTransitionError::WrongState {
-                    expected: RenderBufferSlotState::Ready,
-                    actual: state.public_state(),
-                });
-            }
+        let (SlotState::Ready { scope: owner, .. }
+        | SlotState::Retained { scope: owner, .. }) = state
+        else {
+            return Err(RenderBufferTransitionError::WrongState {
+                expected: RenderBufferSlotState::Ready,
+                actual: state.public_state(),
+            });
         };
         if owner != scope {
             return Err(RenderBufferTransitionError::WrongScope);
