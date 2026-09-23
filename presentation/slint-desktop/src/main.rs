@@ -259,5 +259,22 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
+    if std::env::var_os("OFFICE_DESKTOP_SMOKE").is_some() {
+        ui.show()?;
+        let weak_ui = ui.as_weak();
+        slint::Timer::single_shot(std::time::Duration::from_millis(75), move || {
+            let ui = weak_ui
+                .upgrade()
+                .expect("desktop smoke window must remain alive");
+            println!("office_desktop_shell=ready");
+            println!("office_desktop_text_bytes={}", ui.get_document_text().len());
+            println!("office_desktop_status={}", ui.get_status_text());
+            slint::quit_event_loop().expect("desktop smoke event loop must stop");
+        });
+        slint::run_event_loop()?;
+        ui.hide()?;
+        return Ok(());
+    }
+
     ui.run()
 }
