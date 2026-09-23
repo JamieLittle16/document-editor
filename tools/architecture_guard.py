@@ -28,6 +28,9 @@ ALLOWED_INTERNAL_DEPENDENCIES: dict[str, set[str]] = {
     # ADR-0011 host-owned render resource primitive. Keep this leaf independent of session,
     # engine, transport and presentation crates; callers supply product-owned scope values.
     "render-buffer-pool": set(),
+    # Qualification-only portable external backing. It may consume the low-level lease/descriptor
+    # contract but must not learn about sessions, engines, transport, UI or product authority.
+    "render-file-backing-qualification": {"render-buffer-pool"},
     "app-core": {"document-engine-api", "document-protocol", "document-session", "extension-runtime"},
     # R0A executable harness: direct mock/session access is temporary and visible.
     "desktop": {

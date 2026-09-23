@@ -142,7 +142,7 @@ Writer/LibreOfficeKit supplies raster tiles today. A future native engine may re
 9. Native invalidation callbacks remain advisory and cannot publish semantic or render authority.
 10. Platform mapping technology remains behind a replaceable backend.
 11. A reused slot's requested write range is prepared/cleared before the new lease becomes renderer-visible; stale bytes from an older lease are never a valid render result.
-12. Raster descriptors use fixed-width fields and are geometry/range/lease-generation validated before any backing slice or worker-visible mapping region is accepted.
+12. Raster descriptors use fixed-width fields and are geometry/range/lease-generation validated before any backing slice or worker-visible mapping region is accepted.\n13. Lease-generation safety applies to storage write authority as well as completion messages: backing for a newer generation must not be mutable through a stale worker capability from an older generation.
 
 ## Required R0B implementation evidence
 
@@ -153,7 +153,7 @@ Before the real viewport treats this path as production-ready, tests must prove:
 - reused backing is cleared before a new write lease becomes renderer-visible;
 - lease generation prevents stale completion after slot reuse;
 - invalid offset/stride/length/geometry cannot escape a slot;
-- worker death invalidates all outstanding leases and allows safe pool reclamation;
+- worker death invalidates all outstanding leases and allows safe pool reclamation;\n- storage reuse cannot expose a newer generation to writes through a stale worker capability;
 - stale completions from an old `AuthorityGeneration` are rejected;
 - revision mismatch cannot populate authoritative hit-test/layout state;
 - no host read occurs while the worker owns a write lease;
