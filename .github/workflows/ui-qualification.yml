@@ -72,6 +72,20 @@ jobs:
           grep -Fx 'ui_scale_factor=1' /tmp/office-slint-1x.log
           grep -Fx 'ui_tile_bytes=262144' /tmp/office-slint-1x.log
           grep -Fx 'ui_tile_checksum=6744427103266065219' /tmp/office-slint-1x.log
+      - name: Stress 96-page native viewport at 1x
+        run: |
+          set -o pipefail
+          xvfb-run -a env \
+            OFFICE_UI_QUALIFY_ONCE=1 \
+            OFFICE_UI_STRESS=1 \
+            SLINT_BACKEND=winit-software \
+            SLINT_SCALE_FACTOR=1 \
+            cargo run --quiet | tee /tmp/office-slint-stress.log
+          grep -Fx 'ui_stress_pages=96' /tmp/office-slint-stress.log
+          grep -Fx 'ui_stress_snapshots=8' /tmp/office-slint-stress.log
+          grep -E '^ui_stress_total_ms=[0-9]+$' /tmp/office-slint-stress.log
+          grep -E '^ui_stress_slowest_ms=[0-9]+$' /tmp/office-slint-stress.log
+          grep -E '^ui_stress_snapshot_checksum_xor=[0-9]+$' /tmp/office-slint-stress.log
       - name: Recompile qualification shell for 2x
         run: cargo clean -p ui-framework-slint-qualification
       - name: Create native window at 2x
