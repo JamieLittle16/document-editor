@@ -1,9 +1,9 @@
 #![doc = "Standalone Slint qualification shell for Office R0A UI-framework evaluation."]
 
-use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer};
+use slint::{ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
 
 slint::slint! {
-    import { Button, LineEdit, ScrollView } from "std-widgets.slint";
+    import { Button, LineEdit, ListView } from "std-widgets.slint";
 
     export component EditorShell inherits Window {
         title: "Office UI Qualification";
@@ -11,9 +11,11 @@ slint::slint! {
         height: 800px;
 
         in property <image> document-tile;
+        in property <[int]> page-indices;
         in-out property <string> search-text;
         in-out property <string> status-text: "Ready — authority-safe render preview";
         in-out property <int> zoom-percent: 100;
+        in-out property <int> visible-page-index: 0;
 
         MenuBar {
             Menu {
@@ -100,27 +102,26 @@ slint::slint! {
                 accessible-id: "document-viewport";
                 accessible-label: "Document viewport";
 
-                ScrollView {
+                ListView {
                     width: parent.width;
                     height: parent.height;
                     viewport-width: 1200px;
-                    viewport-height: 1500px;
+                    viewport-y: -root.visible-page-index * (1088px * root.zoom-percent / 100);
 
-                    Rectangle {
+                    for page-index in root.page-indices: Rectangle {
                         width: 1200px;
-                        height: 1500px;
+                        height: 1088px * root.zoom-percent / 100;
                         background: #dfe3e8;
 
-                        page := Rectangle {
+                        Rectangle {
                             x: 192px;
-                            y: 64px;
+                            y: 16px;
                             width: 816px * root.zoom-percent / 100;
                             height: 1056px * root.zoom-percent / 100;
                             background: white;
                             border-width: 1px;
                             border-color: #aeb5bd;
                             accessible-role: region;
-                            accessible-id: "rendered-document-page";
                             accessible-label: "Rendered document page";
 
                             Image {
@@ -165,8 +166,11 @@ slint::slint! {
 
 const TILE_WIDTH: u32 = 256;
 const TILE_HEIGHT: u32 = 256;
+const QUALIFICATION_PAGE_COUNT: i32 = 96;
 const EXPECTED_TILE_BYTES: usize = (TILE_WIDTH as usize) * (TILE_HEIGHT as usize) * 4;
 const EXPECTED_TILE_FNV1A64: u64 = 6_744_427_103_266_065_219;
+const STRESS_TOTAL_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+const STRESS_FRAME_LIMIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 fn qualification_tile() -> SharedPixelBuffer<Rgba8Pixel> {
     let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(TILE_WIDTH, TILE_HEIGHT);
@@ -201,15 +205,66 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
         })
 }
 
+fn run_snapshot_stress(ui: &EditorShell) {
+    let steps = [
+        (0, 70),
+        (12, 100),
+        (24, 125),
+        (48, 150),
+        (72, 200),
+        (95, 100),
+        (48, 80),
+        (0, 100),
+    ];
+    let physical_size = ui.window().size();
+    let expected_snapshot_bytes = usize::try_from(physical_size.width * physical_size.height)
+        .expect("window area must fit usize")
+        * 4;
+    let total_started = std::time::Instant::now();
+    let mut slowest = std::time::Duration::ZERO;
+    let mut checksum_xor = 0_u64;
+
+    for (page_index, zoom_percent) in steps {
+        ui.set_visible_page_index(page_index);
+        ui.set_zoom_percent(zoom_percent);
+
+        let frame_started = std::time::Instant::now();
+        let snapshot = ui
+            .window()
+            .take_snapshot()
+            .expect("software renderer must support native-window snapshots");
+        let frame_elapsed = frame_started.elapsed();
+        slowest = slowest.max(frame_elapsed);
+
+        assert_eq!(snapshot.width(), physical_size.width);
+        assert_eq!(snapshot.height(), physical_size.height);
+        assert_eq!(snapshot.as_bytes().len(), expected_snapshot_bytes);
+        checksum_xor ^= fnv1a64(snapshot.as_bytes());
+        assert!(frame_elapsed < STRESS_FRAME_LIMIT);
+    }
+
+    let total_elapsed = total_started.elapsed();
+    assert!(total_elapsed < STRESS_TOTAL_LIMIT);
+    println!("ui_stress_pages={QUALIFICATION_PAGE_COUNT}");
+    println!("ui_stress_snapshots={}", steps.len());
+    println!("ui_stress_total_ms={}", total_elapsed.as_millis());
+    println!("ui_stress_slowest_ms={}", slowest.as_millis());
+    println!("ui_stress_snapshot_checksum_xor={checksum_xor}");
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let ui = EditorShell::new()?;
     let tile = qualification_tile();
     let checksum = fnv1a64(tile.as_bytes());
     ui.set_document_tile(Image::from_rgba8(tile));
+    ui.set_page_indices(ModelRc::new(VecModel::from(
+        (0..QUALIFICATION_PAGE_COUNT).collect::<Vec<_>>(),
+    )));
 
     if std::env::var_os("OFFICE_UI_QUALIFY_ONCE").is_some() {
         ui.show()?;
         let weak_ui = ui.as_weak();
+        let stress_enabled = std::env::var_os("OFFICE_UI_STRESS").is_some();
         slint::Timer::single_shot(std::time::Duration::from_millis(50), move || {
             let ui = weak_ui
                 .upgrade()
@@ -229,6 +284,11 @@ fn main() -> Result<(), slint::PlatformError> {
             assert!(scale_factor.is_finite() && scale_factor > 0.0);
             assert!(physical_size.width > 0 && physical_size.height > 0);
             assert_eq!(checksum, EXPECTED_TILE_FNV1A64);
+
+            if stress_enabled {
+                run_snapshot_stress(&ui);
+            }
+
             slint::quit_event_loop().expect("qualification event loop must be stoppable");
         });
         slint::run_event_loop()?;
@@ -253,5 +313,13 @@ mod tests {
         assert_eq!(first.as_bytes().len(), EXPECTED_TILE_BYTES);
         assert_eq!(first.as_bytes(), second.as_bytes());
         assert_eq!(fnv1a64(first.as_bytes()), EXPECTED_TILE_FNV1A64);
+    }
+
+    #[test]
+    fn qualification_page_model_is_large_and_bounded() {
+        let pages = (0..QUALIFICATION_PAGE_COUNT).collect::<Vec<_>>();
+        assert_eq!(pages.len(), 96);
+        assert_eq!(pages.first(), Some(&0));
+        assert_eq!(pages.last(), Some(&95));
     }
 }
