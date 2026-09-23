@@ -7,7 +7,7 @@ fn main() {
         .expect("open fixture");
 
     let edited = app
-        .replace_document_text(String::from("Modern document architecture spike"))
+        .replace_document_text("Modern document architecture spike")
         .expect("replace document text");
 
     println!("{}", edited.text());
