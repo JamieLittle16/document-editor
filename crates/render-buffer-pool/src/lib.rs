@@ -854,9 +854,7 @@ impl InMemoryRenderBufferBacking {
 
     #[must_use]
     pub fn capacity_bytes(&self, buffer_id: RenderBufferId) -> Option<usize> {
-        self.slots
-            .get(buffer_id.get() as usize)
-            .map(Vec::len)
+        self.slots.get(buffer_id.get() as usize).map(Vec::len)
     }
 }
 
@@ -910,9 +908,7 @@ impl RenderBufferBacking for InMemoryRenderBufferBacking {
     }
 
     fn bytes(&self, buffer_id: RenderBufferId) -> Option<&[u8]> {
-        self.slots
-            .get(buffer_id.get() as usize)
-            .map(Vec::as_slice)
+        self.slots.get(buffer_id.get() as usize).map(Vec::as_slice)
     }
 }
 
@@ -1083,8 +1079,7 @@ where
         lease: &RenderWriteLease<Scope>,
         written_bytes: usize,
     ) -> Result<ReadyRenderBuffer<Scope>, RenderBufferTransitionError> {
-        self.pool
-            .publish(lease.id(), lease.scope(), written_bytes)
+        self.pool.publish(lease.id(), lease.scope(), written_bytes)
     }
 
     pub fn read_bytes(
@@ -1142,7 +1137,6 @@ where
         &self.backing
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1445,10 +1439,8 @@ mod tests {
 
     #[test]
     fn backed_acquire_prepares_and_clears_reused_bytes() {
-        let mut buffers = BackedRenderBufferPool::new(
-            limits(128, 1, 128, 1),
-            InMemoryRenderBufferBacking::new(),
-        );
+        let mut buffers =
+            BackedRenderBufferPool::new(limits(128, 1, 128, 1), InMemoryRenderBufferBacking::new());
         let scope = Scope(41);
 
         let first = buffers.acquire(scope, 64).expect("first lease");
@@ -1457,24 +1449,26 @@ mod tests {
             .expect("first writable bytes")
             .fill(0xab);
         let first_ready = buffers.publish(&first, 64).expect("first publication");
-        assert!(buffers
-            .read_bytes(&first_ready)
-            .expect("first readable bytes")
-            .iter()
-            .all(|byte| *byte == 0xab));
+        assert!(
+            buffers
+                .read_bytes(&first_ready)
+                .expect("first readable bytes")
+                .iter()
+                .all(|byte| *byte == 0xab)
+        );
         buffers.recycle(&first_ready).expect("first recycle");
 
         let second = buffers.acquire(scope, 32).expect("reused lease");
         assert_eq!(second.id().buffer_id(), first.id().buffer_id());
-        assert!(buffers
-            .write_bytes(&second)
-            .expect("reused writable bytes")
-            .iter()
-            .all(|byte| *byte == 0));
-        assert_eq!(
+        assert!(
             buffers
-                .backing()
-                .capacity_bytes(second.id().buffer_id()),
+                .write_bytes(&second)
+                .expect("reused writable bytes")
+                .iter()
+                .all(|byte| *byte == 0)
+        );
+        assert_eq!(
+            buffers.backing().capacity_bytes(second.id().buffer_id()),
             Some(64)
         );
     }
@@ -1511,10 +1505,8 @@ mod tests {
 
     #[test]
     fn backed_access_rejects_stale_write_lease_after_slot_reuse() {
-        let mut buffers = BackedRenderBufferPool::new(
-            limits(128, 1, 128, 1),
-            InMemoryRenderBufferBacking::new(),
-        );
+        let mut buffers =
+            BackedRenderBufferPool::new(limits(128, 1, 128, 1), InMemoryRenderBufferBacking::new());
         let scope = Scope(43);
 
         let first = buffers.acquire(scope, 64).expect("first lease");
@@ -1536,10 +1528,8 @@ mod tests {
 
     #[test]
     fn backed_ready_view_exposes_only_published_prefix() {
-        let mut buffers = BackedRenderBufferPool::new(
-            limits(128, 1, 128, 1),
-            InMemoryRenderBufferBacking::new(),
-        );
+        let mut buffers =
+            BackedRenderBufferPool::new(limits(128, 1, 128, 1), InMemoryRenderBufferBacking::new());
         let scope = Scope(44);
 
         let lease = buffers.acquire(scope, 64).expect("lease");
@@ -1547,7 +1537,10 @@ mod tests {
         bytes[..5].copy_from_slice(b"hello");
 
         let ready = buffers.publish(&lease, 5).expect("publication");
-        assert_eq!(buffers.read_bytes(&ready).expect("readable bytes"), b"hello");
+        assert_eq!(
+            buffers.read_bytes(&ready).expect("readable bytes"),
+            b"hello"
+        );
         buffers.retain(&ready).expect("retain");
         assert_eq!(
             buffers.read_bytes(&ready).expect("retained readable bytes"),
@@ -1557,10 +1550,8 @@ mod tests {
 
     #[test]
     fn recycled_ready_token_cannot_read_reused_backing() {
-        let mut buffers = BackedRenderBufferPool::new(
-            limits(128, 1, 128, 1),
-            InMemoryRenderBufferBacking::new(),
-        );
+        let mut buffers =
+            BackedRenderBufferPool::new(limits(128, 1, 128, 1), InMemoryRenderBufferBacking::new());
         let scope = Scope(45);
 
         let first = buffers.acquire(scope, 16).expect("first lease");
@@ -1584,5 +1575,4 @@ mod tests {
             })
         );
     }
-
 }
