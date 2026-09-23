@@ -1,23 +1,14 @@
+use app_core::AppCore;
 use document_engine_mock::MockDocumentEngine;
-use document_protocol::{DocumentRevision, DocumentTransaction, TextEdit, TextOffset};
-use document_session::DocumentSession;
 
 fn main() {
-    let mut session = DocumentSession::new(MockDocumentEngine::default());
-    session
-        .open_text_fixture(String::from("Document editor architecture spike"))
+    let mut app = AppCore::new(MockDocumentEngine::default());
+    app.open_text_document(String::from("Document editor architecture spike"))
         .expect("open fixture");
-    session
-        .apply_transaction(DocumentTransaction {
-            expected_revision: DocumentRevision::INITIAL,
-            edits: vec![TextEdit {
-                start_utf8: TextOffset::new(0),
-                end_utf8: TextOffset::new(8),
-                replacement: String::from("Modern document"),
-            }],
-        })
-        .expect("apply transaction");
 
-    let observation = session.semantic_text().expect("semantic text");
-    println!("{}", observation.value());
+    let edited = app
+        .replace_document_text(String::from("Modern document architecture spike"))
+        .expect("replace document text");
+
+    println!("{}", edited.text());
 }
