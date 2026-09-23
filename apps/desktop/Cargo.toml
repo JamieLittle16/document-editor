@@ -6,9 +6,8 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+app-core = { path = "../../crates/app-core" }
 document-engine-mock = { path = "../../crates/document-engine-mock" }
-document-protocol = { path = "../../crates/document-protocol" }
-document-session = { path = "../../crates/document-session" }
 
 [lints]
 workspace = true
