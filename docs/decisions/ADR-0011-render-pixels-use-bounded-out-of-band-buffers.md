@@ -77,6 +77,8 @@ A worker may write only within a valid lease and declared capacity. The host/UI 
 
 A successful completion message is the publication boundary that makes the written bytes eligible for host consumption. A worker death, protocol loss or authority replacement invalidates every unfinished lease associated with that worker/authority. Partially written memory is never promoted to a valid render result merely because bytes exist in the mapping.
 
+Before a new write lease is exposed to a renderer, the host backing implementation must prepare at least the declared slot capacity and clear the lease's requested byte range. This prevents pixels from an older document/revision/authority from becoming observable through slot reuse even if the next renderer writes or publishes only a prefix. Backends may optimize how that clearing is implemented, but they may not weaken the no-stale-bytes guarantee.
+
 ### Authority and stale-result rejection
 
 Every render request/result is subordinate to product-owned authority. The host validates enough information to reject stale or cross-session data, including:
@@ -137,12 +139,15 @@ Writer/LibreOfficeKit supplies raster tiles today. A future native engine may re
 8. Qualification tile size and CI paint timings are not production contracts.
 9. Native invalidation callbacks remain advisory and cannot publish semantic or render authority.
 10. Platform mapping technology remains behind a replaceable backend.
+11. A reused slot's requested write range is prepared/cleared before the new lease becomes renderer-visible; stale bytes from an older lease are never a valid render result.
 
 ## Required R0B implementation evidence
 
 Before the real viewport treats this path as production-ready, tests must prove:
 
 - bounded pool admission and exhaustion behavior;
+- backing preparation failure rolls back the lease instead of exposing a half-acquired render resource;
+- reused backing is cleared before a new write lease becomes renderer-visible;
 - lease generation prevents stale completion after slot reuse;
 - invalid offset/stride/length/geometry cannot escape a slot;
 - worker death invalidates all outstanding leases and allows safe pool reclamation;

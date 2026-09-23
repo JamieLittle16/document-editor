@@ -598,6 +598,45 @@ where
         result
     }
 
+    pub fn validate_write_lease(
+        &self,
+        lease: &RenderWriteLease<Scope>,
+    ) -> Result<(), RenderBufferTransitionError> {
+        let slot_index = self.validate_generation(lease.id())?;
+        match &self.slots[slot_index].state {
+            SlotState::Leased { scope, .. } => {
+                if scope != lease.scope() {
+                    return Err(RenderBufferTransitionError::WrongScope);
+                }
+                Ok(())
+            }
+            state => Err(RenderBufferTransitionError::WrongState {
+                expected: RenderBufferSlotState::Leased,
+                actual: state.public_state(),
+            }),
+        }
+    }
+
+    pub fn validate_readable_buffer(
+        &self,
+        ready: &ReadyRenderBuffer<Scope>,
+    ) -> Result<(), RenderBufferTransitionError> {
+        let slot_index = self.validate_generation(ready.id())?;
+        let state = &self.slots[slot_index].state;
+        let (SlotState::Ready { scope: owner, .. } | SlotState::Retained { scope: owner, .. }) =
+            state
+        else {
+            return Err(RenderBufferTransitionError::WrongState {
+                expected: RenderBufferSlotState::Ready,
+                actual: state.public_state(),
+            });
+        };
+        if owner != ready.scope() {
+            return Err(RenderBufferTransitionError::WrongScope);
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn slot_state(&self, buffer_id: RenderBufferId) -> Option<RenderBufferSlotState> {
         self.slot(buffer_id).map(|slot| slot.state.public_state())
@@ -727,6 +766,374 @@ where
         if remove {
             self.outstanding_by_scope.remove(scope);
         }
+    }
+}
+
+/// Host-side byte backing for render-buffer slots.
+///
+/// `prepare_for_write` is the security/correctness boundary before a lease is exposed to a
+/// renderer. Implementations must guarantee at least `capacity_bytes` of host-visible storage
+/// and clear the first `requested_bytes` bytes so a reused slot cannot expose pixels from an
+/// older authority or revision.
+///
+/// Platform shared-memory implementations may additionally expose worker descriptors through a
+/// separate platform adapter; that handle-transfer concern is intentionally not part of this
+/// portable host-storage contract.
+pub trait RenderBufferBacking {
+    type Error;
+
+    fn prepare_for_write(
+        &mut self,
+        buffer_id: RenderBufferId,
+        capacity_bytes: usize,
+        requested_bytes: usize,
+    ) -> Result<(), Self::Error>;
+
+    fn bytes_mut(&mut self, buffer_id: RenderBufferId) -> Option<&mut [u8]>;
+
+    fn bytes(&self, buffer_id: RenderBufferId) -> Option<&[u8]>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InMemoryRenderBufferBackingError {
+    RequestedBytesExceedCapacity {
+        requested: usize,
+        capacity: usize,
+    },
+    SlotTableAllocationFailed {
+        buffer_id: RenderBufferId,
+    },
+    ByteAllocationFailed {
+        buffer_id: RenderBufferId,
+        capacity: usize,
+    },
+}
+
+impl fmt::Display for InMemoryRenderBufferBackingError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RequestedBytesExceedCapacity {
+                requested,
+                capacity,
+            } => write!(
+                formatter,
+                "render backing request {requested} exceeds slot capacity {capacity}"
+            ),
+            Self::SlotTableAllocationFailed { buffer_id } => write!(
+                formatter,
+                "could not allocate render backing slot table through buffer {}",
+                buffer_id.get()
+            ),
+            Self::ByteAllocationFailed {
+                buffer_id,
+                capacity,
+            } => write!(
+                formatter,
+                "could not allocate {capacity} bytes for render buffer {}",
+                buffer_id.get()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InMemoryRenderBufferBackingError {}
+
+/// Portable host-owned backing used to qualify allocation/preparation semantics before selecting
+/// platform-specific shared mappings.
+#[derive(Debug, Default)]
+pub struct InMemoryRenderBufferBacking {
+    slots: Vec<Vec<u8>>,
+}
+
+impl InMemoryRenderBufferBacking {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { slots: Vec::new() }
+    }
+
+    #[must_use]
+    pub fn capacity_bytes(&self, buffer_id: RenderBufferId) -> Option<usize> {
+        self.slots.get(buffer_id.get() as usize).map(Vec::len)
+    }
+}
+
+impl RenderBufferBacking for InMemoryRenderBufferBacking {
+    type Error = InMemoryRenderBufferBackingError;
+
+    fn prepare_for_write(
+        &mut self,
+        buffer_id: RenderBufferId,
+        capacity_bytes: usize,
+        requested_bytes: usize,
+    ) -> Result<(), Self::Error> {
+        if requested_bytes > capacity_bytes {
+            return Err(
+                InMemoryRenderBufferBackingError::RequestedBytesExceedCapacity {
+                    requested: requested_bytes,
+                    capacity: capacity_bytes,
+                },
+            );
+        }
+
+        let slot_index = buffer_id.get() as usize;
+        if self.slots.len() <= slot_index {
+            let required_slots = slot_index + 1 - self.slots.len();
+            self.slots.try_reserve_exact(required_slots).map_err(|_| {
+                InMemoryRenderBufferBackingError::SlotTableAllocationFailed { buffer_id }
+            })?;
+            self.slots.resize_with(slot_index + 1, Vec::new);
+        }
+
+        let bytes = &mut self.slots[slot_index];
+        if bytes.len() < capacity_bytes {
+            let additional = capacity_bytes - bytes.len();
+            bytes.try_reserve_exact(additional).map_err(|_| {
+                InMemoryRenderBufferBackingError::ByteAllocationFailed {
+                    buffer_id,
+                    capacity: capacity_bytes,
+                }
+            })?;
+            bytes.resize(capacity_bytes, 0);
+        }
+
+        bytes[..requested_bytes].fill(0);
+        Ok(())
+    }
+
+    fn bytes_mut(&mut self, buffer_id: RenderBufferId) -> Option<&mut [u8]> {
+        self.slots
+            .get_mut(buffer_id.get() as usize)
+            .map(Vec::as_mut_slice)
+    }
+
+    fn bytes(&self, buffer_id: RenderBufferId) -> Option<&[u8]> {
+        self.slots.get(buffer_id.get() as usize).map(Vec::as_slice)
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum BackedRenderBufferAcquireError<BackingError> {
+    Pool(RenderBufferAcquireError),
+    Backing {
+        error: BackingError,
+        rollback_error: Option<RenderBufferTransitionError>,
+    },
+}
+
+impl<BackingError> fmt::Display for BackedRenderBufferAcquireError<BackingError>
+where
+    BackingError: fmt::Display,
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pool(error) => error.fmt(formatter),
+            Self::Backing {
+                error,
+                rollback_error: None,
+            } => write!(formatter, "render backing preparation failed: {error}"),
+            Self::Backing {
+                error,
+                rollback_error: Some(rollback_error),
+            } => write!(
+                formatter,
+                "render backing preparation failed ({error}) and lease rollback also failed ({rollback_error})"
+            ),
+        }
+    }
+}
+
+impl<BackingError> std::error::Error for BackedRenderBufferAcquireError<BackingError>
+where
+    BackingError: std::error::Error + 'static,
+{
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Pool(error) => Some(error),
+            Self::Backing { error, .. } => Some(error),
+        }
+    }
+}
+
+impl<BackingError> From<RenderBufferAcquireError> for BackedRenderBufferAcquireError<BackingError> {
+    fn from(error: RenderBufferAcquireError) -> Self {
+        Self::Pool(error)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RenderBufferAccessError {
+    Transition(RenderBufferTransitionError),
+    MissingBacking {
+        buffer_id: RenderBufferId,
+    },
+    BackingTooSmall {
+        buffer_id: RenderBufferId,
+        available: usize,
+        required: usize,
+    },
+}
+
+impl fmt::Display for RenderBufferAccessError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Transition(error) => error.fmt(formatter),
+            Self::MissingBacking { buffer_id } => write!(
+                formatter,
+                "render buffer {} has no prepared host backing",
+                buffer_id.get()
+            ),
+            Self::BackingTooSmall {
+                buffer_id,
+                available,
+                required,
+            } => write!(
+                formatter,
+                "render buffer {} backing has {available} bytes, requires {required}",
+                buffer_id.get()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RenderBufferAccessError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Transition(error) => Some(error),
+            Self::MissingBacking { .. } | Self::BackingTooSmall { .. } => None,
+        }
+    }
+}
+
+impl From<RenderBufferTransitionError> for RenderBufferAccessError {
+    fn from(error: RenderBufferTransitionError) -> Self {
+        Self::Transition(error)
+    }
+}
+
+/// Composition of the bounded lease state machine with host-owned byte storage.
+///
+/// This remains a host-side primitive. It deliberately does not decide how a platform mapping
+/// handle is transferred to an isolated worker.
+#[derive(Debug)]
+pub struct BackedRenderBufferPool<Scope, Backing> {
+    pool: RenderBufferPool<Scope>,
+    backing: Backing,
+}
+
+impl<Scope, Backing> BackedRenderBufferPool<Scope, Backing>
+where
+    Scope: Clone + Ord,
+    Backing: RenderBufferBacking,
+{
+    #[must_use]
+    pub fn new(limits: RenderBufferPoolLimits, backing: Backing) -> Self {
+        Self {
+            pool: RenderBufferPool::new(limits),
+            backing,
+        }
+    }
+
+    pub fn acquire(
+        &mut self,
+        scope: Scope,
+        requested_bytes: usize,
+    ) -> Result<RenderWriteLease<Scope>, BackedRenderBufferAcquireError<Backing::Error>> {
+        let lease = self.pool.acquire(scope, requested_bytes)?;
+        if let Err(error) = self.backing.prepare_for_write(
+            lease.id().buffer_id(),
+            lease.capacity_bytes(),
+            lease.requested_bytes(),
+        ) {
+            let rollback_error = self.pool.cancel(lease.id(), lease.scope()).err();
+            return Err(BackedRenderBufferAcquireError::Backing {
+                error,
+                rollback_error,
+            });
+        }
+        Ok(lease)
+    }
+
+    pub fn write_bytes(
+        &mut self,
+        lease: &RenderWriteLease<Scope>,
+    ) -> Result<&mut [u8], RenderBufferAccessError> {
+        self.pool.validate_write_lease(lease)?;
+        let buffer_id = lease.id().buffer_id();
+        let required = lease.requested_bytes();
+        let Some(bytes) = self.backing.bytes_mut(buffer_id) else {
+            return Err(RenderBufferAccessError::MissingBacking { buffer_id });
+        };
+        if bytes.len() < required {
+            return Err(RenderBufferAccessError::BackingTooSmall {
+                buffer_id,
+                available: bytes.len(),
+                required,
+            });
+        }
+        Ok(&mut bytes[..required])
+    }
+
+    pub fn publish(
+        &mut self,
+        lease: &RenderWriteLease<Scope>,
+        written_bytes: usize,
+    ) -> Result<ReadyRenderBuffer<Scope>, RenderBufferTransitionError> {
+        self.pool.publish(lease.id(), lease.scope(), written_bytes)
+    }
+
+    pub fn read_bytes(
+        &self,
+        ready: &ReadyRenderBuffer<Scope>,
+    ) -> Result<&[u8], RenderBufferAccessError> {
+        self.pool.validate_readable_buffer(ready)?;
+        let buffer_id = ready.id().buffer_id();
+        let required = ready.written_bytes();
+        let Some(bytes) = self.backing.bytes(buffer_id) else {
+            return Err(RenderBufferAccessError::MissingBacking { buffer_id });
+        };
+        if bytes.len() < required {
+            return Err(RenderBufferAccessError::BackingTooSmall {
+                buffer_id,
+                available: bytes.len(),
+                required,
+            });
+        }
+        Ok(&bytes[..required])
+    }
+
+    pub fn retain(
+        &mut self,
+        ready: &ReadyRenderBuffer<Scope>,
+    ) -> Result<(), RenderBufferTransitionError> {
+        self.pool.retain(ready.id(), ready.scope())
+    }
+
+    pub fn recycle(
+        &mut self,
+        ready: &ReadyRenderBuffer<Scope>,
+    ) -> Result<(), RenderBufferTransitionError> {
+        self.pool.recycle(ready.id(), ready.scope())
+    }
+
+    pub fn cancel(
+        &mut self,
+        lease: &RenderWriteLease<Scope>,
+    ) -> Result<(), RenderBufferTransitionError> {
+        self.pool.cancel(lease.id(), lease.scope())
+    }
+
+    pub fn invalidate_scope(&mut self, scope: &Scope) -> RenderScopeInvalidation {
+        self.pool.invalidate_scope(scope)
+    }
+
+    #[must_use]
+    pub const fn pool(&self) -> &RenderBufferPool<Scope> {
+        &self.pool
+    }
+
+    #[must_use]
+    pub const fn backing(&self) -> &Backing {
+        &self.backing
     }
 }
 
@@ -988,6 +1395,183 @@ mod tests {
         assert_eq!(
             pool.acquire(Scope(33), 1),
             Err(RenderBufferAcquireError::PoolExhausted)
+        );
+    }
+
+    #[derive(Debug, Default)]
+    struct RejectingBacking {
+        attempts: usize,
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct RejectingBackingError;
+
+    impl fmt::Display for RejectingBackingError {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("injected backing preparation failure")
+        }
+    }
+
+    impl std::error::Error for RejectingBackingError {}
+
+    impl RenderBufferBacking for RejectingBacking {
+        type Error = RejectingBackingError;
+
+        fn prepare_for_write(
+            &mut self,
+            _buffer_id: RenderBufferId,
+            _capacity_bytes: usize,
+            _requested_bytes: usize,
+        ) -> Result<(), Self::Error> {
+            self.attempts += 1;
+            Err(RejectingBackingError)
+        }
+
+        fn bytes_mut(&mut self, _buffer_id: RenderBufferId) -> Option<&mut [u8]> {
+            None
+        }
+
+        fn bytes(&self, _buffer_id: RenderBufferId) -> Option<&[u8]> {
+            None
+        }
+    }
+
+    #[test]
+    fn backed_acquire_prepares_and_clears_reused_bytes() {
+        let mut buffers =
+            BackedRenderBufferPool::new(limits(128, 1, 128, 1), InMemoryRenderBufferBacking::new());
+        let scope = Scope(41);
+
+        let first = buffers.acquire(scope, 64).expect("first lease");
+        buffers
+            .write_bytes(&first)
+            .expect("first writable bytes")
+            .fill(0xab);
+        let first_ready = buffers.publish(&first, 64).expect("first publication");
+        assert!(
+            buffers
+                .read_bytes(&first_ready)
+                .expect("first readable bytes")
+                .iter()
+                .all(|byte| *byte == 0xab)
+        );
+        buffers.recycle(&first_ready).expect("first recycle");
+
+        let second = buffers.acquire(scope, 32).expect("reused lease");
+        assert_eq!(second.id().buffer_id(), first.id().buffer_id());
+        assert!(
+            buffers
+                .write_bytes(&second)
+                .expect("reused writable bytes")
+                .iter()
+                .all(|byte| *byte == 0)
+        );
+        assert_eq!(
+            buffers.backing().capacity_bytes(second.id().buffer_id()),
+            Some(64)
+        );
+    }
+
+    #[test]
+    fn backing_failure_rolls_back_lease_and_scope_budget() {
+        let mut buffers =
+            BackedRenderBufferPool::new(limits(128, 1, 128, 1), RejectingBacking::default());
+        let scope = Scope(42);
+
+        let error = buffers
+            .acquire(scope, 64)
+            .expect_err("injected backing failure must reject acquisition");
+        assert_eq!(
+            error,
+            BackedRenderBufferAcquireError::Backing {
+                error: RejectingBackingError,
+                rollback_error: None,
+            }
+        );
+        let stats = buffers.pool().stats();
+        assert_eq!(stats.available_slots, 1);
+        assert_eq!(stats.leased_slots, 0);
+
+        assert!(matches!(
+            buffers.acquire(scope, 64),
+            Err(BackedRenderBufferAcquireError::Backing {
+                error: RejectingBackingError,
+                rollback_error: None,
+            })
+        ));
+        assert_eq!(buffers.backing().attempts, 2);
+    }
+
+    #[test]
+    fn backed_access_rejects_stale_write_lease_after_slot_reuse() {
+        let mut buffers =
+            BackedRenderBufferPool::new(limits(128, 1, 128, 1), InMemoryRenderBufferBacking::new());
+        let scope = Scope(43);
+
+        let first = buffers.acquire(scope, 64).expect("first lease");
+        buffers.cancel(&first).expect("cancel first lease");
+        let second = buffers.acquire(scope, 64).expect("second lease");
+
+        let error = buffers
+            .write_bytes(&first)
+            .expect_err("stale lease must not reopen backing");
+        assert_eq!(
+            error,
+            RenderBufferAccessError::Transition(RenderBufferTransitionError::StaleLease {
+                buffer_id: first.id().buffer_id(),
+                expected_generation: second.id().generation(),
+                actual_generation: first.id().generation(),
+            })
+        );
+    }
+
+    #[test]
+    fn backed_ready_view_exposes_only_published_prefix() {
+        let mut buffers =
+            BackedRenderBufferPool::new(limits(128, 1, 128, 1), InMemoryRenderBufferBacking::new());
+        let scope = Scope(44);
+
+        let lease = buffers.acquire(scope, 64).expect("lease");
+        let bytes = buffers.write_bytes(&lease).expect("writable bytes");
+        bytes[..5].copy_from_slice(b"hello");
+
+        let ready = buffers.publish(&lease, 5).expect("publication");
+        assert_eq!(
+            buffers.read_bytes(&ready).expect("readable bytes"),
+            b"hello"
+        );
+        buffers.retain(&ready).expect("retain");
+        assert_eq!(
+            buffers.read_bytes(&ready).expect("retained readable bytes"),
+            b"hello"
+        );
+    }
+
+    #[test]
+    fn recycled_ready_token_cannot_read_reused_backing() {
+        let mut buffers =
+            BackedRenderBufferPool::new(limits(128, 1, 128, 1), InMemoryRenderBufferBacking::new());
+        let scope = Scope(45);
+
+        let first = buffers.acquire(scope, 16).expect("first lease");
+        buffers
+            .write_bytes(&first)
+            .expect("first writable bytes")
+            .fill(7);
+        let first_ready = buffers.publish(&first, 16).expect("first publish");
+        buffers.recycle(&first_ready).expect("first recycle");
+
+        let second = buffers.acquire(scope, 16).expect("second lease");
+        let error = buffers
+            .read_bytes(&first_ready)
+            .expect_err("old ready token must be stale after reuse");
+        assert_eq!(
+            error,
+            RenderBufferAccessError::Transition(RenderBufferTransitionError::StaleLease {
+                buffer_id: first_ready.id().buffer_id(),
+                expected_generation: second.id().generation(),
+                actual_generation: first_ready.id().generation(),
+            })
         );
     }
 }
