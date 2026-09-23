@@ -66,5 +66,5 @@ jobs:
             SLINT_BACKEND=winit-software \
             cargo run --quiet | tee /tmp/office-desktop.log
           grep -Fx 'office_desktop_shell=ready' /tmp/office-desktop.log
-          grep -E '^office_desktop_text_bytes=[1-9][0-9]*$' /tmp/office-desktop.log
-          grep -E '^office_desktop_status=Authority 1 · Revision 0 · [1-9][0-9]* bytes$' /tmp/office-desktop.log
+          grep -Fx 'office_desktop_text_bytes=21' /tmp/office-desktop.log
+          grep -Fx 'office_desktop_status=Authority 1 · Revision 1 · 21 bytes' /tmp/office-desktop.log
