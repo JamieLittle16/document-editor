@@ -1,18 +1,16 @@
 # Project State
 
-Last updated: 2026-09-06
+Last updated: 2026-09-23
 
 ## Current phase
 
-**R0A — architecture/contracts and high-risk spikes.**
+**R0B — authoritative application shell and production-path integration.**
 
-The modular feature kernel, bounded worker/process foundation, revision-stamped semantic authority, normalized compatibility harness, Writer render-transfer boundary, structural reconciliation evidence, invalidation/restart qualification and application-level checkpoint/replay recovery semantics are now established.
+R0A's high-risk foundations are now established strongly enough to build on rather than keep respiking: bounded worker/process control, revision- and authority-scoped semantics, normalized compatibility fixtures, Writer render-transfer evidence, structural reconciliation, product-owned durable paragraph anchors, callback/restart safety and checkpoint/replay recovery semantics are all present in the repository.
 
-Interior split/merge and paragraph-boundary insertion/deletion prove that live Writer object identity is **not durable logical identity**: exact semantic round trips can replace the original first-paragraph Writer object. Formatting-only mutation supplies the complementary positive-continuity control, duplicate-text qualification prevents content equality becoming identity, and reopen/full-worker-restart qualification proves native identity-token scope ends with the live authority. The resulting rule is asymmetric: same-object equality is strong positive continuity evidence inside one live authority; inequality, text equality and naked native tokens are all non-decisive for durable identity.
+The application path has also moved beyond harness-only work. `app-core` owns authoritative edit intent and snapshots, the first runnable Slint desktop shell sends text edits through that application authority rather than treating widget state as truth, and the large-document viewport qualification demonstrates a virtualized presentation strategy. Slint remains **provisional and replaceable** pending the remaining real-platform IME/accessibility and desktop-integration evidence.
 
-The first Slint 1.17.1 UI viability slice is also qualified without entering product crates: Windows/macOS/Linux source builds pass, Linux native Winit/software windows pass at forced 1× and 2× DPI, and the caller-owned raster boundary survives unchanged. The production UI framework is **still deliberately unfrozen** pending real-platform IME/accessibility, desktop-integration and viewport-performance evidence.
-
-The remaining R0A uncertainty is therefore concentrated in the smallest product-owned durable reconciliation/history-anchor model and the final evidence-backed UI framework selection. Persisted recovery storage, production supervisor wiring and render-buffer implementation move into R0B rather than reopening the already-qualified authority/control/data-plane semantics.
+The active R0B frontier is implementation and integration of the already-selected boundaries: bounded host-owned render resources and platform backing storage, supervised Writer-worker wiring into the authoritative shell, persisted checkpoint/journal storage and user-visible recovery, then richer session/viewport/editor behavior without weakening the authority, anchor or engine-replaceability contracts.
 
 ## Accepted strategic decisions
 
@@ -69,6 +67,15 @@ The remaining R0A uncertainty is therefore concentrated in the smallest product-
 - CI quality gates;
 - executable architecture dependency guard;
 - initial product/architecture/engineering documentation and ADR discipline.
+
+### R0B application and render integration
+
+- `app-core` owns editor intent and authoritative snapshots above the engine/session boundary;
+- the runnable desktop presentation sends user text replacement through `AppCore` and refreshes from returned authoritative state;
+- Slint presentation remains isolated in its own toolchain/workspace so toolkit codegen/MSRV constraints do not enter the correctness kernel;
+- virtualized large-document viewport qualification is present rather than rendering an unbounded page stack;
+- ADR-0011 is now backed by a dependency-free `render-buffer-pool` resource state machine with bounded byte/slot admission, scoped write leases, generation-safe reuse, publication/retain/recycle lifecycle and dead-scope reclamation;
+- the render pool deliberately owns lifecycle and resource identity only; concrete cross-platform mapped backing storage remains the next R0B layer.
 
 ### Modular feature kernel
 
@@ -356,30 +363,29 @@ The qualification also records real integration costs rather than hiding them: L
 
 This evidence establishes viability, **not framework selection**. ADR-0005 remains normative until real-platform IME, screen-reader/accessibility, desktop integration, viewport performance, licensing and toolchain evidence is sufficient.
 
-## Immediate next engineering spikes
+## Immediate next engineering slices
 
-1. Define the smallest product-owned durable logical anchor/reconciliation evidence model justified by the completed structural/duplicate/restart measurements, without mirroring UNO, file-format IDs or content hashes.
-2. Exercise that anchor/reconciliation model across explicit save/reload/checkpoint artifacts and ensure history/recovery consumers depend only on product-owned lineage, structure, semantic evidence and authority scope.
-3. Continue UI framework qualification with real Windows/macOS/Linux IME/international-input and screen-reader/accessibility fixtures.
-4. Make clipboard, drag/drop, native file-dialog/menu integration explicit and measure large viewport scroll/resize/zoom behavior.
-5. Resolve UI packaging/licensing/MSRV costs and compare the strongest control alternative if any material Slint concern survives; then supersede ADR-0005 with an evidence-backed selection or explicit continuation decision.
-6. Begin R0B implementation of the already-selected render data plane and recovery architecture: bounded host-owned render buffers, durable checkpoint/journal storage and production worker-supervisor/UI recovery wiring.
-7. Add generated/property tests for larger feature graphs before external plugin loading work begins.
-8. Define additive contribution registries only when the first real product feature needs them; do not invent a generic callback bus.
+1. Add host-owned backing storage/mapping behind `render-buffer-pool` while preserving its platform-neutral lease/publication API; allocation failure must cancel rather than publish a lease.
+2. Instantiate render scopes with `SessionAuthorityStamp` in the application/supervisor layer and prove authority replacement reclaims stale leased/ready/retained render resources.
+3. Wire the supervised Writer worker into `app-core` and the runnable desktop shell, replacing the injected mock on the production path without moving document authority into the UI.
+4. Feed real Writer render completions through the qualified render pool into the virtualized viewport with revision/authority validation before presentation.
+5. Persist checkpoint/journal artifacts crash-safely and surface bounded worker-recovery behavior in the desktop application.
+6. Continue real-platform IME/international-input, screen-reader/accessibility, clipboard, drag/drop, file-dialog and native-menu qualification before freezing the UI framework.
+7. Extend product-owned anchors/history only when richer structures require it; do not fall back to UNO object IDs, file-format IDs or content hashes as identity.
+8. Add generated/property tests for larger feature graphs before external plugin loading work begins.
 
 ## Explicitly not started / deliberately unfrozen
 
-- production UI framework integration;
-- production Rust-to-LibreOffice FFI;
-- production process-supervisor API and UI recovery surface;
-- production stable paragraph/object identity;
-- production semantic anchor model;
-- durable Git-like transaction/history store;
+- final production UI framework selection/freeze;
+- production Rust-to-LibreOffice FFI package/API;
+- production process-supervisor API and polished UI recovery surface;
+- complete durable Git-like transaction/history store;
 - persisted crash-safe checkpoint/journal encoding and retention policy;
 - final engine domain-message wire encoding;
 - final cross-platform socket/pipe abstraction;
 - request concurrency/cancellation policy;
-- concrete shared-memory/mapped render-buffer backend and pool tuning;
+- concrete cross-platform shared-memory/mapped render-buffer backend and pool tuning;
+- rich-structure anchor coverage beyond the qualified paragraph model;
 - native document engine;
 - collaboration;
 - runtime loading of third-party plugins;
