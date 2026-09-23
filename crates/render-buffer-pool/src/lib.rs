@@ -530,8 +530,8 @@ where
     ) -> Result<(), RenderBufferTransitionError> {
         let slot_index = self.validate_generation(lease_id)?;
         let state = &self.slots[slot_index].state;
-        let (SlotState::Ready { scope: owner, .. }
-        | SlotState::Retained { scope: owner, .. }) = state
+        let (SlotState::Ready { scope: owner, .. } | SlotState::Retained { scope: owner, .. }) =
+            state
         else {
             return Err(RenderBufferTransitionError::WrongState {
                 expected: RenderBufferSlotState::Ready,
