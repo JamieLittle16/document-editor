@@ -263,6 +263,7 @@ fn main() -> Result<(), slint::PlatformError> {
 
     if std::env::var_os("OFFICE_DESKTOP_SMOKE").is_some() {
         ui.show()?;
+        ui.invoke_document_edited("Smoke edit through UI".into());
         let weak_ui = ui.as_weak();
         slint::Timer::single_shot(std::time::Duration::from_millis(75), move || {
             let ui = weak_ui
