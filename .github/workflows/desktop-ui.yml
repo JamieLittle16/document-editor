@@ -2,7 +2,7 @@ name: desktop-ui
 
 on:
   push:
-    paths: &desktop_paths
+    paths:
       - "presentation/slint-desktop/**"
       - "crates/app-core/**"
       - "crates/document-session/**"
@@ -12,7 +12,15 @@ on:
       - "Cargo.toml"
       - ".github/workflows/desktop-ui.yml"
   pull_request:
-    paths: *desktop_paths
+    paths:
+      - "presentation/slint-desktop/**"
+      - "crates/app-core/**"
+      - "crates/document-session/**"
+      - "crates/document-engine-api/**"
+      - "crates/document-engine-mock/**"
+      - "crates/document-protocol/**"
+      - "Cargo.toml"
+      - ".github/workflows/desktop-ui.yml"
 
 permissions:
   contents: read
