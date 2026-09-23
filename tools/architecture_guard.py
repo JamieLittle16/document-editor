@@ -25,6 +25,9 @@ ALLOWED_INTERNAL_DEPENDENCIES: dict[str, set[str]] = {
     "extension-api": set(),
     "extension-runtime": {"extension-api"},
     "feature-host": {"extension-api", "extension-runtime"},
+    # ADR-0011 host-owned render resource primitive. Keep this leaf independent of session,
+    # engine, transport and presentation crates; callers supply product-owned scope values.
+    "render-buffer-pool": set(),
     "app-core": {"document-engine-api", "document-protocol", "document-session", "extension-runtime"},
     # R0A executable harness: direct mock/session access is temporary and visible.
     "desktop": {
