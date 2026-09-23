@@ -120,10 +120,16 @@ pub enum RenderBufferPoolLimitsError {
 impl fmt::Display for RenderBufferPoolLimitsError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ZeroTotalBytes => {\n                formatter.write_str("render pool total byte budget must be nonzero")\n            }
+            Self::ZeroTotalBytes => {
+                formatter.write_str("render pool total byte budget must be nonzero")
+            }
             Self::ZeroSlots => formatter.write_str("render pool slot budget must be nonzero"),
-            Self::TooManySlots => {\n                formatter.write_str("render pool slot budget exceeds u32 identity space")\n            }
-            Self::ZeroSlotBytes => {\n                formatter.write_str("render pool maximum slot capacity must be nonzero")\n            }
+            Self::TooManySlots => {
+                formatter.write_str("render pool slot budget exceeds u32 identity space")
+            }
+            Self::ZeroSlotBytes => {
+                formatter.write_str("render pool maximum slot capacity must be nonzero")
+            }
             Self::SlotExceedsTotalBudget => {
                 formatter.write_str("render pool maximum slot capacity exceeds total byte budget")
             }
