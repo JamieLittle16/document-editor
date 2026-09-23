@@ -152,9 +152,13 @@ fn stale_worker_capability_cannot_corrupt_new_slot_generation() {
     let new_prepared = backing
         .prepare_lease(&new_lease)
         .expect("new generation backing");
+    let new_capability = backing
+        .raster_capability(&new_prepared, &new_lease, new_descriptor)
+        .expect("new worker capability");
     assert_ne!(old_prepared.path(), new_prepared.path());
+    assert_eq!(new_capability.path(), new_prepared.path());
 
-    let new_bytes_before = fs::read(new_prepared.path()).expect("read new backing");
+    let new_bytes_before = fs::read(new_capability.path()).expect("read new backing");
     assert!(new_bytes_before[..1_280].iter().all(|byte| *byte == 0));
 
     child
