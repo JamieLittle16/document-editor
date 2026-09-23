@@ -1,0 +1,16 @@
+[package]
+name = "render-file-backing-qualification"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+render-buffer-pool = { path = "../render-buffer-pool" }
+
+[[bin]]
+name = "render-file-backing-writer"
+path = "src/bin/render-file-backing-writer.rs"
