@@ -52,10 +52,7 @@ fn main() -> io::Result<()> {
         args.get(4).ok_or_else(|| invalid("missing length"))?,
         "length",
     )?;
-    let first_byte = parse_byte(
-        args.get(5).ok_or_else(|| invalid("missing byte"))?,
-        "byte",
-    )?;
+    let first_byte = parse_byte(args.get(5).ok_or_else(|| invalid("missing byte"))?, "byte")?;
 
     let mut file = OpenOptions::new().read(true).write(true).open(path)?;
     write_pattern(&mut file, offset, length, first_byte)?;
@@ -66,8 +63,7 @@ fn main() -> io::Result<()> {
         }
         "hold-rewrite" => {
             let second_byte = parse_byte(
-                args.get(6)
-                    .ok_or_else(|| invalid("missing rewrite byte"))?,
+                args.get(6).ok_or_else(|| invalid("missing rewrite byte"))?,
                 "rewrite byte",
             )?;
             println!("render_file_worker=ready");
