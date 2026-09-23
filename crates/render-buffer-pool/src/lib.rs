@@ -604,6 +604,17 @@ where
     }
 
     #[must_use]
+    pub fn slot_written_bytes(&self, buffer_id: RenderBufferId) -> Option<usize> {
+        let slot = self.slot(buffer_id)?;
+        match &slot.state {
+            SlotState::Ready { written_bytes, .. } | SlotState::Retained { written_bytes, .. } => {
+                Some(*written_bytes)
+            }
+            SlotState::Available | SlotState::Leased { .. } => None,
+        }
+    }
+
+    #[must_use]
     pub fn stats(&self) -> RenderBufferPoolStats {
         let mut stats = RenderBufferPoolStats {
             total_capacity_bytes: self.total_capacity_bytes,
@@ -805,6 +816,7 @@ mod tests {
             pool.slot_state(id.buffer_id()),
             Some(RenderBufferSlotState::Ready)
         );
+        assert_eq!(pool.slot_written_bytes(id.buffer_id()), Some(96));
 
         pool.retain(id, &scope)
             .expect("ready buffer must be retainable");
@@ -812,6 +824,7 @@ mod tests {
             pool.slot_state(id.buffer_id()),
             Some(RenderBufferSlotState::Retained)
         );
+        assert_eq!(pool.slot_written_bytes(id.buffer_id()), Some(96));
 
         pool.recycle(id, &scope)
             .expect("retained buffer must be recyclable");
@@ -819,6 +832,7 @@ mod tests {
             pool.slot_state(id.buffer_id()),
             Some(RenderBufferSlotState::Available)
         );
+        assert_eq!(pool.slot_written_bytes(id.buffer_id()), None);
 
         let reused = pool.acquire(scope, 64).expect("capacity must be reusable");
         assert_eq!(reused.id().buffer_id(), id.buffer_id());
