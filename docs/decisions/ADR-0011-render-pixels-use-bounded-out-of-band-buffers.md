@@ -79,6 +79,8 @@ A successful completion message is the publication boundary that makes the writt
 
 Before a new write lease is exposed to a renderer, the host backing implementation must prepare at least the declared slot capacity and clear the lease's requested byte range. This prevents pixels from an older document/revision/authority from becoming observable through slot reuse even if the next renderer writes or publishes only a prefix. Backends may optimize how that clearing is implemented, but they may not weaken the no-stale-bytes guarantee.
 
+R0B additionally validates raster descriptors before a backing region is exposed. The portable descriptor uses fixed-width buffer ID, lease generation, capacity, offset, byte length, width, height, stride and explicit pixel-format fields. Geometry/range arithmetic is checked before lease binding; binding then requires exact live buffer/generation/capacity identity and containment inside the current write-request or published-byte prefix. Platform backends consume this validated contract rather than reimplementing ad-hoc bounds checks.
+
 ### Authority and stale-result rejection
 
 Every render request/result is subordinate to product-owned authority. The host validates enough information to reject stale or cross-session data, including:
@@ -140,6 +142,7 @@ Writer/LibreOfficeKit supplies raster tiles today. A future native engine may re
 9. Native invalidation callbacks remain advisory and cannot publish semantic or render authority.
 10. Platform mapping technology remains behind a replaceable backend.
 11. A reused slot's requested write range is prepared/cleared before the new lease becomes renderer-visible; stale bytes from an older lease are never a valid render result.
+12. Raster descriptors use fixed-width fields and are geometry/range/lease-generation validated before any backing slice or worker-visible mapping region is accepted.
 
 ## Required R0B implementation evidence
 
