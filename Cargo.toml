@@ -13,6 +13,7 @@ members = [
   "crates/extension-runtime",
   "crates/feature-host",
   "crates/render-buffer-pool",
+  "crates/render-file-backing-qualification",
   "workers/document-worker",
 ]
 
