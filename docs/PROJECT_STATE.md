@@ -10,7 +10,7 @@ R0A's high-risk foundations are now established strongly enough to build on rath
 
 The application path has also moved beyond harness-only work. `app-core` owns authoritative edit intent and snapshots, the first runnable Slint desktop shell sends text edits through that application authority rather than treating widget state as truth, and the large-document viewport qualification demonstrates a virtualized presentation strategy. Slint remains **provisional and replaceable** pending the remaining real-platform IME/accessibility and desktop-integration evidence.
 
-The active R0B frontier is implementation and integration of the already-selected boundaries: bounded host-owned render resources and platform backing storage, supervised Writer-worker wiring into the authoritative shell, persisted checkpoint/journal storage and user-visible recovery, then richer session/viewport/editor behavior without weakening the authority, anchor or engine-replaceability contracts.
+The active R0B frontier is implementation and integration of the already-selected boundaries: worker-visible external/platform render backing behind the validated host-owned descriptor/lease model, supervised Writer-worker wiring into the authoritative shell, persisted checkpoint/journal storage and user-visible recovery, then richer session/viewport/editor behavior without weakening the authority, anchor or engine-replaceability contracts.
 
 ## Accepted strategic decisions
 
@@ -75,7 +75,9 @@ The active R0B frontier is implementation and integration of the already-selecte
 - Slint presentation remains isolated in its own toolchain/workspace so toolkit codegen/MSRV constraints do not enter the correctness kernel;
 - virtualized large-document viewport qualification is present rather than rendering an unbounded page stack;
 - ADR-0011 is now backed by a dependency-free `render-buffer-pool` resource state machine with bounded byte/slot admission, scoped write leases, generation-safe reuse, publication/retain/recycle lifecycle and dead-scope reclamation;
-- the render pool deliberately owns lifecycle and resource identity only; concrete cross-platform mapped backing storage remains the next R0B layer.
+- host-owned backing preparation clears reused write ranges before renderer exposure and rolls back failed preparation without leaking lease/scope budget;
+- fixed-width raster descriptors validate explicit pixel format, lease generation, capacity, offset/length, width/height/stride arithmetic and published-prefix containment before any backing slice is exposed;
+- the render pool deliberately owns lifecycle, resource identity and descriptor validation only; worker-visible external/platform backing storage remains the next R0B layer.
 
 ### Modular feature kernel
 
