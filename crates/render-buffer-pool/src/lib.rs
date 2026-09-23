@@ -1967,7 +1967,11 @@ mod tests {
     fn raster_descriptor_binds_exactly_to_live_lease_identity_capacity_and_request() {
         let mut pool = RenderBufferPool::new(limits(1_024, 1, 1_024, 1));
         let scope = Scope(46);
-        let lease = pool.acquire(scope, 512).expect("lease");
+        let warmup = pool.acquire(scope, 768).expect("warmup lease");
+        pool.cancel(warmup.id(), &scope)
+            .expect("warmup lease must release");
+        let lease = pool.acquire(scope, 512).expect("smaller reused lease");
+        assert_eq!(lease.capacity_bytes(), 768);
 
         let valid = descriptor_for(&lease, 128, 256, 32, 2, 128);
         valid
